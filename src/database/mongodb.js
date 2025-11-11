@@ -1,4 +1,3 @@
-// src/database/mongodb.js
 const mongoose = require("mongoose");
 
 async function database_init() {
@@ -9,8 +8,7 @@ async function database_init() {
 
   try {
     await mongoose.connect(uri, {
-      // Ajuste conforme seu provedor/local
-      serverSelectionTimeoutMS: 10000, // 10s pra achar servidor
+      serverSelectionTimeoutMS: 10000, 
       socketTimeoutMS: 20000,
       maxPoolSize: 10,
       retryWrites: true,
@@ -20,12 +18,11 @@ async function database_init() {
     console.log("✅ Mongo conectado:", mongoose.connection.host);
   } catch (err) {
     console.error("❌ Erro ao conectar no Mongo:", err.message);
-    throw err; // deixa o caller decidir (vamos abortar o start)
+    throw err;
   }
 }
 
 function isDbUp() {
-  // 1 = connected, 2 = connecting
   return mongoose.connection.readyState === 1;
 }
 
