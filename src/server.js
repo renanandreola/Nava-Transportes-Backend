@@ -7,6 +7,8 @@ const cors = require("cors");
 const jwt = require("jsonwebtoken");
 const bcrypt = require("bcryptjs");
 
+const Trip = require("./database/Schemas/Trip");
+
 const { swaggerUi, swaggerSpec } = require("./config/swaggerConfig");
 
 const ORIGIN = process.env.CORS_ORIGIN || "http://localhost:3001";
@@ -213,6 +215,53 @@ router.put("/admin/users/:id/password", requireAuth, requireAdmin, async (req, r
   } catch (e) {
     console.error("PUT /admin/users/:id/password", e);
     res.status(500).json({ message: "Erro ao redefinir senha" });
+  }
+});
+
+// Criar viagem (driver/admin)
+router.post("/driver/trips", requireAuth, async (req, res) => {
+  try {
+    // se for admin, pode cadastrar para qualquer motorista; se for driver, força o id
+    const isAdmin = req.user?.role === "admin";
+
+    const payload = req.body || {};
+    if (!isAdmin) {
+      payload.driverId = req.user.id;
+      payload.driverName = req.user.name;
+    }
+
+    if (!payload.driverId) {
+      return res.status(400).json({ message: "driverId é obrigatório." });
+    }
+
+    const trip = await Trip.create(payload);
+    return res.status(201).json({ message: "Viagem criada", trip });
+  } catch (e) {
+    console.error("POST /driver/trips", e);
+    return res.status(500).json({ message: "Erro ao criar viagem" });
+  }
+});
+
+// Listar viagens do próprio motorista (ou todas, se admin)
+router.get("/driver/trips", requireAuth, async (req, res) => {
+  try {
+    const isAdmin = req.user?.role === "admin";
+    const { page = 1, limit = 20, driverId } = req.query;
+    const skip = (Number(page) - 1) * Number(limit);
+
+    const where = isAdmin
+      ? (driverId ? { driverId } : {})
+      : { driverId: req.user.id };
+
+    const [items, total] = await Promise.all([
+      Trip.find(where).sort({ createdAt: -1 }).skip(skip).limit(Number(limit)).lean(),
+      Trip.countDocuments(where),
+    ]);
+
+    return res.json({ items, total, page: Number(page), limit: Number(limit) });
+  } catch (e) {
+    console.error("GET /driver/trips", e);
+    return res.status(500).json({ message: "Erro ao listar viagens" });
   }
 });
 
