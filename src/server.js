@@ -181,6 +181,85 @@ router.post("/admin/users", requireAuth, requireAdmin, async (req, res) => {
   }
 });
 
+router.get("/admin/trips", requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const driverId = req.query.driverId;
+    const plate = req.query.plate;
+    const from = req.query.from;
+    const to = req.query.to;
+    const q = req.query.q;
+    let limit = parseInt(req.query.limit, 10);
+
+    if (isNaN(limit) || limit <= 0) {
+      limit = 100;
+    }
+    if (limit > 500) {
+      limit = 500;
+    }
+
+    const filter = {};
+
+    // filtrar por motorista
+    if (driverId) {
+      filter.driverId = driverId; // se o schema for ObjectId, o Mongoose faz o cast
+    }
+
+    // filtrar por placa (case-insensitive, contém)
+    if (plate) {
+      const plateTrim = plate.trim();
+      if (plateTrim) {
+        filter.plate = new RegExp(plateTrim, "i");
+      }
+    }
+
+    // filtrar por período (usando createdAt)
+    if (from || to) {
+      filter.createdAt = {};
+      if (from) {
+        // início do dia
+        filter.createdAt.$gte = new Date(from + "T00:00:00.000Z");
+      }
+      if (to) {
+        // fim do dia
+        filter.createdAt.$lte = new Date(to + "T23:59:59.999Z");
+      }
+    }
+
+    // busca geral (origem, destino, posto, assinador, placa, nome motorista)
+    if (q) {
+      const qTrim = q.trim();
+      if (qTrim) {
+        const regex = new RegExp(qTrim, "i");
+        // se já tiver algum filtro $or, mescla; aqui vamos só setar
+        filter.$or = [
+          { plate: regex },
+          { driverName: regex },
+          { "trechos.origem": regex },
+          { "trechos.destino": regex },
+          { "trechos.posto": regex },
+          { "trechos.assinador": regex },
+        ];
+      }
+    }
+
+    const [items, total] = await Promise.all([
+      Trip.find(filter)
+        .sort({ createdAt: -1 })
+        .limit(limit)
+        .lean(),
+      Trip.countDocuments(filter),
+    ]);
+
+    res.json({
+      total: total,
+      items: items,
+    });
+  } catch (e) {
+    console.error("GET /admin/trips", e);
+    res.status(500).json({ message: "Erro ao carregar controles" });
+  }
+});
+
 router.put("/admin/users/:id", requireAuth, requireAdmin, async (req, res) => {
   try {
     const { id } = req.params;
