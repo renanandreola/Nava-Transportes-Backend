@@ -181,6 +181,90 @@ router.post("/admin/users", requireAuth, requireAdmin, async (req, res) => {
   }
 });
 
+router.put("/admin/users/:id", requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const id = req.params.id;
+    const name = req.body.name;
+    const email = req.body.email;
+    const password = req.body.password;
+    const role = req.body.role;
+    const active = req.body.active;
+
+    const user = await User.findById(id);
+    if (!user) {
+      return res.status(404).json({ message: "Usuário não encontrado." });
+    }
+
+    if (!name || !email) {
+      return res.status(400).json({ message: "Nome e e-mail são obrigatórios." });
+    }
+
+    // se mudou o e-mail, checa duplicado
+    if (email !== user.email) {
+      const exists = await User.findOne({ email: email }).lean();
+      if (exists) {
+        return res.status(409).json({ message: "E-mail já cadastrado." });
+      }
+      user.email = email;
+    }
+
+    user.name = name;
+
+    // se veio uma senha não vazia, troca
+    if (password && password.trim() !== "") {
+      const passwordHash = await bcrypt.hash(password, 10);
+      user.passwordHash = passwordHash;
+    }
+
+    // se quiser permitir alterar role/active:
+    if (role) {
+      user.role = role;
+    }
+    if (typeof active === "boolean") {
+      user.active = active;
+    }
+
+    await user.save();
+
+    return res.json({
+      message: "Usuário atualizado",
+      user: {
+        id: user._id,
+        name: user.name,
+        email: user.email,
+        role: user.role,
+        active: user.active,
+      },
+    });
+  } catch (e) {
+    console.error("PUT /admin/users/:id", e);
+    return res.status(500).json({ message: "Erro ao atualizar usuário" });
+  }
+});
+
+router.delete("/admin/users/:id", requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const id = req.params.id;
+
+    const user = await User.findById(id).lean();
+    if (!user) {
+      return res.status(404).json({ message: "Usuário não encontrado." });
+    }
+
+    // se quiser impedir remover admin, descomenta:
+    // if (user.role === "admin") {
+    //   return res.status(400).json({ message: "Não é permitido excluir usuários admin." });
+    // }
+
+    await User.deleteOne({ _id: id });
+
+    return res.json({ message: "Usuário excluído com sucesso." });
+  } catch (e) {
+    console.error("DELETE /admin/users/:id", e);
+    return res.status(500).json({ message: "Erro ao excluir usuário" });
+  }
+});
+
 router.get("/admin/trips", requireAuth, requireAdmin, async (req, res) => {
   try {
     const driverId = req.query.driverId;
@@ -257,6 +341,79 @@ router.get("/admin/trips", requireAuth, requireAdmin, async (req, res) => {
   } catch (e) {
     console.error("GET /admin/trips", e);
     res.status(500).json({ message: "Erro ao carregar controles" });
+  }
+});
+
+router.put("/admin/trips/:id", requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const id = req.params.id;
+
+    const trip = await Trip.findById(id);
+    if (!trip) {
+      return res.status(404).json({ message: "Controle não encontrado." });
+    }
+
+    const driverId = req.body.driverId;
+    const driverName = req.body.driverName;
+    const plate = req.body.plate;
+    const totalDoFrete = req.body.totalDoFrete;
+    const totalPago = req.body.totalPago;
+    const premiacao = req.body.premiacao;
+    const totalAssinado = req.body.totalAssinado;
+
+    if (!plate || typeof plate !== "string" || plate.trim() === "") {
+      return res.status(400).json({ message: "Placa é obrigatória." });
+    }
+
+    trip.plate = plate.trim();
+
+    if (driverId) {
+      trip.driverId = driverId;
+    }
+    if (driverName) {
+      trip.driverName = driverName;
+    }
+
+    if (typeof totalDoFrete !== "undefined") {
+      trip.totalDoFrete = Number(totalDoFrete) || 0;
+    }
+    if (typeof totalPago !== "undefined") {
+      trip.totalPago = Number(totalPago) || 0;
+    }
+    if (typeof premiacao !== "undefined") {
+      trip.premiacao = Number(premiacao) || 0;
+    }
+    if (typeof totalAssinado !== "undefined") {
+      trip.totalAssinado = Number(totalAssinado) || 0;
+    }
+
+    await trip.save();
+
+    return res.json({
+      message: "Controle atualizado",
+      trip: trip,
+    });
+  } catch (e) {
+    console.error("PUT /admin/trips/:id", e);
+    return res.status(500).json({ message: "Erro ao atualizar controle" });
+  }
+});
+
+router.delete("/admin/trips/:id", requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const id = req.params.id;
+
+    const trip = await Trip.findById(id).lean();
+    if (!trip) {
+      return res.status(404).json({ message: "Controle não encontrado." });
+    }
+
+    await Trip.deleteOne({ _id: id });
+
+    return res.json({ message: "Controle excluído com sucesso." });
+  } catch (e) {
+    console.error("DELETE /admin/trips/:id", e);
+    return res.status(500).json({ message: "Erro ao excluir controle" });
   }
 });
 
