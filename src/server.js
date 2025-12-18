@@ -501,4 +501,68 @@ router.get("/driver/trips", requireAuth, async (req, res) => {
   }
 });
 
+router.put("/driver/trips/:id", requireAuth, async (req, res) => {
+  try {
+    const id = req.params.id;
+    const userId = req.user && req.user._id;
+
+    const trip = await Trip.findById(id);
+    if (!trip) {
+      return res.status(404).json({ message: "Viagem não encontrada." });
+    }
+
+    // se não for admin, garante que a viagem é dele
+    if (trip.driverId && userId && String(trip.driverId) !== String(userId)) {
+      return res.status(403).json({ message: "Você não pode editar esta viagem." });
+    }
+
+    const plate = req.body.plate;
+    const kmInicial = req.body.kmInicial;
+    const kmFinal = req.body.kmFinal;
+    const totalDoFrete = req.body.totalDoFrete;
+    const premiacao = req.body.premiacao;
+
+    if (!plate || typeof plate !== "string" || plate.trim() === "") {
+      return res.status(400).json({ message: "Placa é obrigatória." });
+    }
+
+    trip.plate = plate.trim();
+    if (typeof kmInicial !== "undefined") trip.kmInicial = Number(kmInicial) || 0;
+    if (typeof kmFinal !== "undefined") trip.kmFinal = Number(kmFinal) || 0;
+    if (typeof totalDoFrete !== "undefined") trip.totalDoFrete = Number(totalDoFrete) || 0;
+    if (typeof premiacao !== "undefined") trip.premiacao = Number(premiacao) || 0;
+
+    await trip.save();
+
+    return res.json({ message: "Viagem atualizada", trip: trip });
+  } catch (e) {
+    console.error("PUT /driver/trips/:id", e);
+    return res.status(500).json({ message: "Erro ao atualizar viagem" });
+  }
+});
+
+// excluir viagem
+router.delete("/driver/trips/:id", requireAuth, async (req, res) => {
+  try {
+    const id = req.params.id;
+    const userId = req.user && req.user._id;
+
+    const trip = await Trip.findById(id).lean();
+    if (!trip) {
+      return res.status(404).json({ message: "Viagem não encontrada." });
+    }
+
+    if (trip.driverId && userId && String(trip.driverId) !== String(userId)) {
+      return res.status(403).json({ message: "Você não pode excluir esta viagem." });
+    }
+
+    await Trip.deleteOne({ _id: id });
+
+    return res.json({ message: "Viagem excluída com sucesso." });
+  } catch (e) {
+    console.error("DELETE /driver/trips/:id", e);
+    return res.status(500).json({ message: "Erro ao excluir viagem" });
+  }
+});
+
 module.exports = router;
