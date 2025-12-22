@@ -457,24 +457,51 @@ router.put("/admin/users/:id/password", requireAuth, requireAdmin, async (req, r
 // Criar viagem (driver/admin)
 router.post("/driver/trips", requireAuth, async (req, res) => {
   try {
-    // se for admin, pode cadastrar para qualquer motorista; se for driver, força o id
-    const isAdmin = req.user?.role === "admin";
+    const {
+      driverId,
+      driverName,
+      plate,
+      kmInicial,
+      kmFinal,
+      litrosTotal,
+      mediaGeral,
+      totalAssinado,
+      totalPago,
+      premiacao,
+      totalDoFrete,
+      extras,
+      trechos,
 
-    const payload = req.body || {};
-    if (!isAdmin) {
-      payload.driverId = req.user.id;
-      payload.driverName = req.user.name;
-    }
+      // 👇 novos
+      latitude,
+      longitude,
+      locationAccuracy,
+    } = req.body;
 
-    if (!payload.driverId) {
-      return res.status(400).json({ message: "driverId é obrigatório." });
-    }
+    const trip = await Trip.create({
+      driverId: driverId || req.user._id,
+      driverName: driverName || req.user.name,
+      plate,
+      kmInicial,
+      kmFinal,
+      litrosTotal,
+      mediaGeral,
+      totalAssinado,
+      totalPago,
+      premiacao,
+      totalDoFrete,
+      extras,
+      trechos,
 
-    const trip = await Trip.create(payload);
-    return res.status(201).json({ message: "Viagem criada", trip });
+      latitude,
+      longitude,
+      locationAccuracy,
+    });
+
+    res.status(201).json({ message: "Trip criada", trip });
   } catch (e) {
     console.error("POST /driver/trips", e);
-    return res.status(500).json({ message: "Erro ao criar viagem" });
+    res.status(500).json({ message: "Erro ao salvar controle" });
   }
 });
 

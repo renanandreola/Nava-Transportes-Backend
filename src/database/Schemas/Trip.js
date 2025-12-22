@@ -37,6 +37,10 @@ const TripSchema = new Schema({
   }],
 
   trechos: [TrechoSchema],
+  
+  latitude: { type: Number },
+  longitude: { type: Number },
+  locationAccuracy: { type: Number },
 }, { timestamps: true });
 
 module.exports = model("Trip", TripSchema);
