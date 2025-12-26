@@ -592,4 +592,66 @@ router.delete("/driver/trips/:id", requireAuth, async (req, res) => {
   }
 });
 
+router.get("/admin/analytics/drivers", requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const { from, to, driverId } = req.query;
+
+    const match = {};
+
+    if (driverId) {
+      match.driverId = new mongoose.Types.ObjectId(driverId);
+    }
+
+    if (from || to) {
+      match.createdAt = {};
+      if (from) match.createdAt.$gte = new Date(from);
+      if (to) {
+        const d = new Date(to);
+        d.setHours(23, 59, 59, 999);
+        match.createdAt.$lte = d;
+      }
+    }
+
+    const data = await Trip.aggregate([
+      { $match: match },
+
+      {
+        $group: {
+          _id: "$driverId",
+          driverName: { $first: "$driverName" },
+
+          viagens: { $sum: 1 },
+          kmInicialMin: { $min: "$kmInicial" },
+          kmFinalMax: { $max: "$kmFinal" },
+
+          totalFrete: { $sum: "$totalDoFrete" },
+          totalPago: { $sum: "$totalPago" },
+          premiacao: { $sum: "$premiacao" },
+          litrosTotal: { $sum: "$litrosTotal" },
+        },
+      },
+
+      {
+        $addFields: {
+          kmRodado: { $subtract: ["$kmFinalMax", "$kmInicialMin"] },
+          mediaGeral: {
+            $cond: [
+              { $gt: ["$litrosTotal", 0] },
+              { $divide: ["$kmRodado", "$litrosTotal"] },
+              0,
+            ],
+          },
+        },
+      },
+
+      { $sort: { totalFrete: -1 } },
+    ]);
+
+    res.json({ items: data });
+  } catch (e) {
+    console.error("GET /admin/analytics/drivers", e);
+    res.status(500).json({ message: "Erro ao gerar indicadores" });
+  }
+});
+
 module.exports = router;
