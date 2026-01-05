@@ -26,7 +26,7 @@ const TripSchema = new Schema({
   litrosTotal: { type: Number, default: 0 },
   mediaGeral: { type: Number, default: 0 },     // km/l da viagem
 
-  totalAssinado: { type: Number, default: 0 },  // soma de "assinador" se tratar de valor
+  totalAssinado: { type: Number, default: 0 },
   totalPago: { type: Number, default: 0 },
   premiacao: { type: Number, default: 0 },
   totalDoFrete: { type: Number, default: 0 },
