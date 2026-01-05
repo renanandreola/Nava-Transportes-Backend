@@ -34,8 +34,6 @@ const signToken = (payload) =>
   jwt.sign(payload, process.env.JWT_SECRET, {
     expiresIn: process.env.JWT_EXPIRES_IN || "7d",
   });
-  
-app.set("trust proxy", 1);
 
 const setAuthCookie = (res, token) => {
   res.cookie("token", token, {
