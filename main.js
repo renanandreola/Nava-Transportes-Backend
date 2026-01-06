@@ -21,7 +21,6 @@ app.use(
   })
 );
 
-// (opcional) bloqueia requests enquanto DB não estiver conectado
 app.use((req, res, next) => {
   if (!isDbUp()) return res.status(503).json({ message: "Banco indisponível" });
   next();
@@ -31,9 +30,9 @@ const port = process.env.PORT || 3000;
 
 (async () => {
   try {
-    await database_init(); // <<<<<< aguarda de verdade
+    await database_init();
 
-    app.use("/nava", require("./src/server")); // só monta rotas depois
+    app.use("/nava", require("./src/server"));
 
     app.listen(port, () => console.log("Listen on port:", port));
   } catch (err) {
