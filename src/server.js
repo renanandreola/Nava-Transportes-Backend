@@ -119,8 +119,9 @@ router.get("/auth/me", requireAuth, async (req, res) => {
 router.post("/auth/logout", (req, res) => {
   res.clearCookie("token", {
     httpOnly: true,
-    sameSite: "lax",
-    secure: false,
+    sameSite: "none",
+    secure: true,
+    path: "/",
   });
   return res.json({ message: "Deslogado" });
 });
