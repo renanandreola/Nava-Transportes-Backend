@@ -2,12 +2,21 @@ const express = require("express");
 const router = express.Router();
 require("dotenv").config();
 
-const cookieParser = require("cookie-parser");
+// const cookieParser = require("cookie-parser");
 const cors = require("cors");
 const jwt = require("jsonwebtoken");
 const bcrypt = require("bcryptjs");
 
 const Trip = require("./database/Schemas/Trip");
+
+const {
+  signAccessToken,
+  signRefreshToken,
+  verifyAccessToken,
+  verifyRefreshToken,
+} = require("./auth/tokens");
+
+const requireAuth = require("./middlewares/requireAuth");
 
 const { swaggerUi, swaggerSpec } = require("./config/swaggerConfig");
 
@@ -19,7 +28,7 @@ router.use(
   })
 );
 router.use(express.json());
-router.use(cookieParser());
+// router.use(cookieParser());
 
 router.use("/api-docs", swaggerUi.serve, swaggerUi.setup(swaggerSpec));
 
@@ -35,70 +44,74 @@ const signToken = (payload) =>
     expiresIn: process.env.JWT_EXPIRES_IN || "7d",
   });
 
-const setAuthCookie = (res, token) => {
-  res.cookie("token", token, {
-    httpOnly: true,
-    sameSite: "none", 
-    secure: true,  
-    path: "/",       
-    maxAge: 7 * 24 * 60 * 60 * 1000,
-  });
-};
+// const setAuthCookie = (res, token) => {
+//   res.cookie("token", token, {
+//     httpOnly: true,
+//     sameSite: "none", 
+//     secure: true,  
+//     path: "/",       
+//     maxAge: 7 * 24 * 60 * 60 * 1000,
+//   });
+// };
 
-const requireAuth = (req, res, next) => {
-  const token = req.cookies?.token;
-  if (!token) return res.status(401).json({ message: "Não autenticado" });
+// const requireAuth = (req, res, next) => {
+//   const token = req.cookies?.token;
+//   if (!token) return res.status(401).json({ message: "Não autenticado" });
 
-  try {
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
-    req.user = decoded; // { id, email, name, role }
-    return next();
-  } catch (e) {
-    return res.status(401).json({ message: "Sessão inválida/expirada" });
-  }
-};
+//   try {
+//     const decoded = jwt.verify(token, process.env.JWT_SECRET);
+//     req.user = decoded; // { id, email, name, role }
+//     return next();
+//   } catch (e) {
+//     return res.status(401).json({ message: "Sessão inválida/expirada" });
+//   }
+// };
 
 router.post("/auth/login", async (req, res) => {
   try {
     const { email, password } = req.body;
 
-    console.log(req.body);
-    
-
-    if (!email || !password)
+    if (!email || !password) {
       return res.status(400).json({ message: "Email e senha são obrigatórios." });
-
-    const user = await User.findOne({ email }).lean();
-    if (!user) return res.status(401).json({ message: "Credenciais inválidas." });
-
-    const stored = user.password || user.passwordHash || "";
-    let ok = false;
-
-    if (stored && stored.length > 0) {
-      try {
-        ok = await bcrypt.compare(password, stored);
-      } catch (_) {
-        ok = false;
-      }
     }
 
-    if (!ok && stored === password) ok = true;
+    const user = await User.findOne({ email }).lean();
+    if (!user) {
+      return res.status(401).json({ message: "Credenciais inválidas." });
+    }
 
-    if (!ok && email === "admin@admin.com" && password === "admin") ok = true;
+    let ok = false;
 
-    if (!ok) return res.status(401).json({ message: "Credenciais inválidas." });
+    if (user.passwordHash) {
+      ok = await bcrypt.compare(password, user.passwordHash);
+    }
 
-    const token = signToken({
+    if (!ok && user.password) {
+      ok = user.password === password;
+    }
+
+    if (!ok && email === "admin@admin.com" && password === "admin") {
+      ok = true;
+    }
+
+    if (!ok) {
+      return res.status(401).json({ message: "Credenciais inválidas." });
+    }
+
+    const payload = {
       id: String(user._id),
       email: user.email,
-      name: user.name || "Admin",
-      role: user.role || "admin",
-    });
+      name: user.name,
+      role: user.role || "driver",
+    };
 
-    setAuthCookie(res, token);
+    const accessToken = signAccessToken(payload);
+    const refreshToken = signRefreshToken({ id: payload.id });
+
     return res.json({
-      message: "Autenticado",
-      user: { email: user.email, name: user.name, role: user.role },
+      user: payload,
+      accessToken,
+      refreshToken,
     });
   } catch (err) {
     console.error("Login error:", err);
@@ -106,25 +119,107 @@ router.post("/auth/login", async (req, res) => {
   }
 });
 
-router.get("/auth/me", requireAuth, async (req, res) => {
+// router.post("/auth/login", async (req, res) => {
+//   try {
+//     const { email, password } = req.body;
+
+//     console.log(req.body);
+    
+
+//     if (!email || !password)
+//       return res.status(400).json({ message: "Email e senha são obrigatórios." });
+
+//     const user = await User.findOne({ email }).lean();
+//     if (!user) return res.status(401).json({ message: "Credenciais inválidas." });
+
+//     const stored = user.password || user.passwordHash || "";
+//     let ok = false;
+
+//     if (stored && stored.length > 0) {
+//       try {
+//         ok = await bcrypt.compare(password, stored);
+//       } catch (_) {
+//         ok = false;
+//       }
+//     }
+
+//     if (!ok && stored === password) ok = true;
+
+//     if (!ok && email === "admin@admin.com" && password === "admin") ok = true;
+
+//     if (!ok) return res.status(401).json({ message: "Credenciais inválidas." });
+
+//     const token = signToken({
+//       id: String(user._id),
+//       email: user.email,
+//       name: user.name || "Admin",
+//       role: user.role || "admin",
+//     });
+
+//     setAuthCookie(res, token);
+//     return res.json({
+//       message: "Autenticado",
+//       user: { email: user.email, name: user.name, role: user.role },
+//     });
+//   } catch (err) {
+//     console.error("Login error:", err);
+//     return res.status(500).json({ message: "Erro no login" });
+//   }
+// });
+
+router.post("/auth/refresh", async (req, res) => {
+  const { refreshToken } = req.body;
+  if (!refreshToken) {
+    return res.status(401).json({ message: "Refresh token ausente" });
+  }
+
   try {
-    const user = await User.findById(req.user.id).select("email name role").lean();
-    if (!user) return res.status(404).json({ message: "Usuário não encontrado" });
-    return res.json({ user });
-  } catch (e) {
-    return res.status(500).json({ message: "Erro ao buscar usuário" });
+    const decoded = verifyRefreshToken(refreshToken);
+    const user = await User.findById(decoded.id).lean();
+    if (!user) {
+      return res.status(401).json({ message: "Usuário inválido" });
+    }
+
+    const payload = {
+      id: String(user._id),
+      email: user.email,
+      role: user.role,
+      name: user.name,
+    };
+
+    const newAccessToken = signAccessToken(payload);
+
+    return res.json({
+      accessToken: newAccessToken,
+    });
+  } catch {
+    return res.status(401).json({ message: "Refresh token inválido" });
   }
 });
 
-router.post("/auth/logout", (req, res) => {
-  res.clearCookie("token", {
-    httpOnly: true,
-    sameSite: "none",
-    secure: true,
-    path: "/",
-  });
-  return res.json({ message: "Deslogado" });
+router.get("/auth/me", requireAuth, async (req, res) => {
+  return res.json({ user: req.user });
 });
+
+// router.get("/auth/me", requireAuth, async (req, res) => {
+//   try {
+//     const user = await User.findById(req.user.id).select("email name role").lean();
+//     if (!user) return res.status(404).json({ message: "Usuário não encontrado" });
+//     return res.json({ user });
+//   } catch (e) {
+//     return res.status(500).json({ message: "Erro ao buscar usuário" });
+//   }
+// });
+
+// router.post("/auth/logout", (req, res) => {
+//   res.clearCookie("token", {
+//     httpOnly: true,
+//     sameSite: "none",
+//     secure: true,
+//     path: "/",
+//   });
+//   return res.json({ message: "Deslogado" });
+// });
 
 const requireAdmin = (req, res, next) => {
   if (!req.user || req.user.role !== "admin") {
