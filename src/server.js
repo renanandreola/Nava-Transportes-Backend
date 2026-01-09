@@ -2,12 +2,12 @@ const express = require("express");
 const router = express.Router();
 require("dotenv").config();
 
-// const cookieParser = require("cookie-parser");
 const cors = require("cors");
-const jwt = require("jsonwebtoken");
 const bcrypt = require("bcryptjs");
 
 const Trip = require("./database/Schemas/Trip");
+const User = require("./database/Schemas/Users");
+const Payment = require("./database/Schemas/Payment");
 
 const {
   signAccessToken,
@@ -21,6 +21,7 @@ const requireAuth = require("./middlewares/requireAuth");
 const { swaggerUi, swaggerSpec } = require("./config/swaggerConfig");
 
 const ORIGIN = process.env.CORS_ORIGIN || "http://localhost:3001";
+
 router.use(
   cors({
     origin: ORIGIN,
@@ -28,7 +29,6 @@ router.use(
   })
 );
 router.use(express.json());
-// router.use(cookieParser());
 
 router.use("/api-docs", swaggerUi.serve, swaggerUi.setup(swaggerSpec));
 
@@ -36,36 +36,6 @@ router.get("/health", async (req, res) => {
   console.log("Nava test routing in running!");
   return res.json({ status: 200, message: "Nava test routing in running!" });
 });
-
-const User = require("./database/Schemas/Users");
-
-const signToken = (payload) =>
-  jwt.sign(payload, process.env.JWT_SECRET, {
-    expiresIn: process.env.JWT_EXPIRES_IN || "7d",
-  });
-
-// const setAuthCookie = (res, token) => {
-//   res.cookie("token", token, {
-//     httpOnly: true,
-//     sameSite: "none", 
-//     secure: true,  
-//     path: "/",       
-//     maxAge: 7 * 24 * 60 * 60 * 1000,
-//   });
-// };
-
-// const requireAuth = (req, res, next) => {
-//   const token = req.cookies?.token;
-//   if (!token) return res.status(401).json({ message: "Não autenticado" });
-
-//   try {
-//     const decoded = jwt.verify(token, process.env.JWT_SECRET);
-//     req.user = decoded; // { id, email, name, role }
-//     return next();
-//   } catch (e) {
-//     return res.status(401).json({ message: "Sessão inválida/expirada" });
-//   }
-// };
 
 router.post("/auth/login", async (req, res) => {
   try {
@@ -119,54 +89,6 @@ router.post("/auth/login", async (req, res) => {
   }
 });
 
-// router.post("/auth/login", async (req, res) => {
-//   try {
-//     const { email, password } = req.body;
-
-//     console.log(req.body);
-    
-
-//     if (!email || !password)
-//       return res.status(400).json({ message: "Email e senha são obrigatórios." });
-
-//     const user = await User.findOne({ email }).lean();
-//     if (!user) return res.status(401).json({ message: "Credenciais inválidas." });
-
-//     const stored = user.password || user.passwordHash || "";
-//     let ok = false;
-
-//     if (stored && stored.length > 0) {
-//       try {
-//         ok = await bcrypt.compare(password, stored);
-//       } catch (_) {
-//         ok = false;
-//       }
-//     }
-
-//     if (!ok && stored === password) ok = true;
-
-//     if (!ok && email === "admin@admin.com" && password === "admin") ok = true;
-
-//     if (!ok) return res.status(401).json({ message: "Credenciais inválidas." });
-
-//     const token = signToken({
-//       id: String(user._id),
-//       email: user.email,
-//       name: user.name || "Admin",
-//       role: user.role || "admin",
-//     });
-
-//     setAuthCookie(res, token);
-//     return res.json({
-//       message: "Autenticado",
-//       user: { email: user.email, name: user.name, role: user.role },
-//     });
-//   } catch (err) {
-//     console.error("Login error:", err);
-//     return res.status(500).json({ message: "Erro no login" });
-//   }
-// });
-
 router.post("/auth/refresh", async (req, res) => {
   const { refreshToken } = req.body;
   if (!refreshToken) {
@@ -198,28 +120,30 @@ router.post("/auth/refresh", async (req, res) => {
 });
 
 router.get("/auth/me", requireAuth, async (req, res) => {
-  return res.json({ user: req.user });
+  try {
+    const user = await User.findById(req.user.id)
+      .select("name email role commission plate active")
+      .lean();
+
+    if (!user) {
+      return res.status(404).json({ message: "Usuário não encontrado" });
+    }
+
+    return res.json({
+      user: {
+        id: user._id,
+        name: user.name,
+        email: user.email,
+        role: user.role,
+        commission: user.commission,
+        plate: user.plate,
+        active: user.active,
+      },
+    });
+  } catch (e) {
+    return res.status(500).json({ message: "Erro ao buscar usuário" });
+  }
 });
-
-// router.get("/auth/me", requireAuth, async (req, res) => {
-//   try {
-//     const user = await User.findById(req.user.id).select("email name role").lean();
-//     if (!user) return res.status(404).json({ message: "Usuário não encontrado" });
-//     return res.json({ user });
-//   } catch (e) {
-//     return res.status(500).json({ message: "Erro ao buscar usuário" });
-//   }
-// });
-
-// router.post("/auth/logout", (req, res) => {
-//   res.clearCookie("token", {
-//     httpOnly: true,
-//     sameSite: "none",
-//     secure: true,
-//     path: "/",
-//   });
-//   return res.json({ message: "Deslogado" });
-// });
 
 const requireAdmin = (req, res, next) => {
   if (!req.user || req.user.role !== "admin") {
@@ -255,21 +179,28 @@ router.get("/admin/users", requireAuth, requireAdmin, async (req, res) => {
 
 router.post("/admin/users", requireAuth, requireAdmin, async (req, res) => {
   try {
-    const { name, email, password, role = "driver", active = true } = req.body;
+    const {name, email, password, role = "driver", active = true, commission = 0} = req.body;
 
     if (!name || !email || !password) {
       return res.status(400).json({ message: "Nome, e-mail e senha são obrigatórios." });
+    }
+
+    if (commission < 0 || commission > 100) {
+      return res.status(400).json({
+        message: "Premiação deve estar entre 0 e 100%",
+      });
     }
 
     const exists = await User.findOne({ email }).lean();
     if (exists) return res.status(409).json({ message: "E-mail já cadastrado." });
 
     const passwordHash = await bcrypt.hash(password, 10);
-    const user = await User.create({ name, email, passwordHash, role, active });
+
+    const user = await User.create({name, email, passwordHash, role, active, commission});
 
     res.status(201).json({
       message: "Usuário criado",
-      user: { id: user._id, name: user.name, email: user.email, role: user.role, active: user.active }
+      user: { id: user._id, name: user.name, email: user.email, role: user.role, active: user.active, commission: user.commission, }
     });
   } catch (e) {
     console.error("POST /admin/users", e);
@@ -285,8 +216,10 @@ router.put("/admin/users/:id", requireAuth, requireAdmin, async (req, res) => {
     const password = req.body.password;
     const role = req.body.role;
     const active = req.body.active;
+    const commission = req.body.commission;
 
     const user = await User.findById(id);
+
     if (!user) {
       return res.status(404).json({ message: "Usuário não encontrado." });
     }
@@ -295,7 +228,15 @@ router.put("/admin/users/:id", requireAuth, requireAdmin, async (req, res) => {
       return res.status(400).json({ message: "Nome e e-mail são obrigatórios." });
     }
 
-    // se mudou o e-mail, checa duplicado
+    if (
+      commission !== undefined &&
+      (isNaN(commission) || commission < 0 || commission > 100)
+    ) {
+      return res.status(400).json({
+        message: "Premiação deve estar entre 0 e 100%",
+      });
+    }
+
     if (email !== user.email) {
       const exists = await User.findOne({ email: email }).lean();
       if (exists) {
@@ -306,18 +247,21 @@ router.put("/admin/users/:id", requireAuth, requireAdmin, async (req, res) => {
 
     user.name = name;
 
-    // se veio uma senha não vazia, troca
     if (password && password.trim() !== "") {
       const passwordHash = await bcrypt.hash(password, 10);
       user.passwordHash = passwordHash;
     }
 
-    // se quiser permitir alterar role/active:
     if (role) {
       user.role = role;
     }
+
     if (typeof active === "boolean") {
       user.active = active;
+    }
+
+    if (commission !== undefined) {
+      user.commission = Number(commission);
     }
 
     await user.save();
@@ -330,6 +274,7 @@ router.put("/admin/users/:id", requireAuth, requireAdmin, async (req, res) => {
         email: user.email,
         role: user.role,
         active: user.active,
+        commission: user.commission
       },
     });
   } catch (e) {
@@ -346,11 +291,6 @@ router.delete("/admin/users/:id", requireAuth, requireAdmin, async (req, res) =>
     if (!user) {
       return res.status(404).json({ message: "Usuário não encontrado." });
     }
-
-    // se quiser impedir remover admin, descomenta:
-    // if (user.role === "admin") {
-    //   return res.status(400).json({ message: "Não é permitido excluir usuários admin." });
-    // }
 
     await User.deleteOne({ _id: id });
 
@@ -379,12 +319,10 @@ router.get("/admin/trips", requireAuth, requireAdmin, async (req, res) => {
 
     const filter = {};
 
-    // filtrar por motorista
     if (driverId) {
-      filter.driverId = driverId; // se o schema for ObjectId, o Mongoose faz o cast
+      filter.driverId = driverId;
     }
 
-    // filtrar por placa (case-insensitive, contém)
     if (plate) {
       const plateTrim = plate.trim();
       if (plateTrim) {
@@ -392,15 +330,12 @@ router.get("/admin/trips", requireAuth, requireAdmin, async (req, res) => {
       }
     }
 
-    // filtrar por período (usando createdAt)
     if (from || to) {
       filter.createdAt = {};
       if (from) {
-        // início do dia
         filter.createdAt.$gte = new Date(from + "T00:00:00.000Z");
       }
       if (to) {
-        // fim do dia
         filter.createdAt.$lte = new Date(to + "T23:59:59.999Z");
       }
     }
@@ -410,14 +345,14 @@ router.get("/admin/trips", requireAuth, requireAdmin, async (req, res) => {
       const qTrim = q.trim();
       if (qTrim) {
         const regex = new RegExp(qTrim, "i");
-        // se já tiver algum filtro $or, mescla; aqui vamos só setar
+
         filter.$or = [
           { plate: regex },
           { driverName: regex },
           { "trechos.origem": regex },
           { "trechos.destino": regex },
           { "trechos.posto": regex },
-          { "trechos.assinador": regex },
+          // { "trechos.assinador": regex },
         ];
       }
     }
@@ -453,9 +388,9 @@ router.put("/admin/trips/:id", requireAuth, requireAdmin, async (req, res) => {
     const driverName = req.body.driverName;
     const plate = req.body.plate;
     const totalDoFrete = req.body.totalDoFrete;
-    const totalPago = req.body.totalPago;
+    // const totalPago = req.body.totalPago;
     const premiacao = req.body.premiacao;
-    const totalAssinado = req.body.totalAssinado;
+    // const totalAssinado = req.body.totalAssinado;
 
     if (!plate || typeof plate !== "string" || plate.trim() === "") {
       return res.status(400).json({ message: "Placa é obrigatória." });
@@ -473,15 +408,15 @@ router.put("/admin/trips/:id", requireAuth, requireAdmin, async (req, res) => {
     if (typeof totalDoFrete !== "undefined") {
       trip.totalDoFrete = Number(totalDoFrete) || 0;
     }
-    if (typeof totalPago !== "undefined") {
-      trip.totalPago = Number(totalPago) || 0;
-    }
+    // if (typeof totalPago !== "undefined") {
+    //   trip.totalPago = Number(totalPago) || 0;
+    // }
     if (typeof premiacao !== "undefined") {
       trip.premiacao = Number(premiacao) || 0;
     }
-    if (typeof totalAssinado !== "undefined") {
-      trip.totalAssinado = Number(totalAssinado) || 0;
-    }
+    // if (typeof totalAssinado !== "undefined") {
+    //   trip.totalAssinado = Number(totalAssinado) || 0;
+    // }
 
     await trip.save();
 
@@ -513,26 +448,6 @@ router.delete("/admin/trips/:id", requireAuth, requireAdmin, async (req, res) =>
   }
 });
 
-router.put("/admin/users/:id", requireAuth, requireAdmin, async (req, res) => {
-  try {
-    const { id } = req.params;
-    const { name, email, role, active } = req.body;
-
-    const user = await User.findByIdAndUpdate(
-      id,
-      { $set: { ...(name && { name }), ...(email && { email }), ...(role && { role }), ...(active !== undefined && { active }) } },
-      { new: true, runValidators: true }
-    ).lean();
-
-    if (!user) return res.status(404).json({ message: "Usuário não encontrado" });
-
-    res.json({ message: "Atualizado", user });
-  } catch (e) {
-    console.error("PUT /admin/users/:id", e);
-    res.status(500).json({ message: "Erro ao atualizar usuário" });
-  }
-});
-
 router.put("/admin/users/:id/password", requireAuth, requireAdmin, async (req, res) => {
   try {
     const { id } = req.params;
@@ -561,18 +476,28 @@ router.post("/driver/trips", requireAuth, async (req, res) => {
       kmFinal,
       litrosTotal,
       mediaGeral,
-      totalAssinado,
-      totalPago,
-      premiacao,
+      premiacaoPercentual,
       totalDoFrete,
       extras,
       trechos,
-
-      // 👇 novos
       latitude,
       longitude,
       locationAccuracy,
     } = req.body;
+
+    const percentual = Number(premiacaoPercentual) || 0;
+    const totalFreteNum = Number(totalDoFrete) || 0;
+
+    // segurança
+    if (percentual < 0 || percentual > 100) {
+      return res.status(400).json({
+        message: "Percentual de premiação inválido.",
+      });
+    }
+
+    const premiacaoValor = +(
+      totalFreteNum * (percentual / 100)
+    ).toFixed(2);
 
     const trip = await Trip.create({
       driverId: driverId || req.user._id,
@@ -582,13 +507,11 @@ router.post("/driver/trips", requireAuth, async (req, res) => {
       kmFinal,
       litrosTotal,
       mediaGeral,
-      totalAssinado,
-      totalPago,
-      premiacao,
-      totalDoFrete,
+      premiacaoPercentual: percentual,
+      premiacaoValor,
+      totalDoFrete: totalFreteNum,
       extras,
       trechos,
-
       latitude,
       longitude,
       locationAccuracy,
@@ -634,7 +557,6 @@ router.put("/driver/trips/:id", requireAuth, async (req, res) => {
       return res.status(404).json({ message: "Viagem não encontrada." });
     }
 
-    // se não for admin, garante que a viagem é dele
     if (trip.driverId && userId && String(trip.driverId) !== String(userId)) {
       return res.status(403).json({ message: "Você não pode editar esta viagem." });
     }
@@ -643,7 +565,7 @@ router.put("/driver/trips/:id", requireAuth, async (req, res) => {
     const kmInicial = req.body.kmInicial;
     const kmFinal = req.body.kmFinal;
     const totalDoFrete = req.body.totalDoFrete;
-    const premiacao = req.body.premiacao;
+    const premiacaoPercentual = req.body.premiacaoPercentual;
 
     if (!plate || typeof plate !== "string" || plate.trim() === "") {
       return res.status(400).json({ message: "Placa é obrigatória." });
@@ -653,7 +575,24 @@ router.put("/driver/trips/:id", requireAuth, async (req, res) => {
     if (typeof kmInicial !== "undefined") trip.kmInicial = Number(kmInicial) || 0;
     if (typeof kmFinal !== "undefined") trip.kmFinal = Number(kmFinal) || 0;
     if (typeof totalDoFrete !== "undefined") trip.totalDoFrete = Number(totalDoFrete) || 0;
-    if (typeof premiacao !== "undefined") trip.premiacao = Number(premiacao) || 0;
+    // if (typeof premiacao !== "undefined") trip.premiacao = Number(premiacao) || 0;
+
+    if (typeof premiacaoPercentual !== "undefined") {
+      const perc = Number(premiacaoPercentual) || 0;
+
+      if (perc < 0 || perc > 100) {
+        return res.status(400).json({
+          message: "Percentual de premiação inválido.",
+        });
+      }
+
+      trip.premiacaoPercentual = perc;
+
+      const baseFrete = Number(trip.totalDoFrete) || 0;
+      trip.premiacaoValor = +(
+        baseFrete * (perc / 100)
+      ).toFixed(2);
+    }
 
     await trip.save();
 
@@ -688,65 +627,81 @@ router.delete("/driver/trips/:id", requireAuth, async (req, res) => {
   }
 });
 
-router.get("/admin/analytics/drivers", requireAuth, requireAdmin, async (req, res) => {
+router.get("/admin/payments", requireAuth, requireAdmin, async (req, res) => {
   try {
-    const { from, to, driverId } = req.query;
+    const { driverId, from, to } = req.query;
 
-    const match = {};
+    const filter = {};
 
     if (driverId) {
-      match.driverId = new mongoose.Types.ObjectId(driverId);
+      filter.driverId = driverId;
     }
 
     if (from || to) {
-      match.createdAt = {};
-      if (from) match.createdAt.$gte = new Date(from);
+      filter.dataPagamento = {};
+      if (from) {
+        filter.dataPagamento.$gte = new Date(from + "T00:00:00.000Z");
+      }
       if (to) {
-        const d = new Date(to);
-        d.setHours(23, 59, 59, 999);
-        match.createdAt.$lte = d;
+        filter.dataPagamento.$lte = new Date(to + "T23:59:59.999Z");
       }
     }
 
-    const data = await Trip.aggregate([
-      { $match: match },
+    const items = await Payment.find(filter)
+      .sort({ dataPagamento: -1 })
+      .limit(200)
+      .lean();
 
-      {
-        $group: {
-          _id: "$driverId",
-          driverName: { $first: "$driverName" },
-
-          viagens: { $sum: 1 },
-          kmInicialMin: { $min: "$kmInicial" },
-          kmFinalMax: { $max: "$kmFinal" },
-
-          totalFrete: { $sum: "$totalDoFrete" },
-          totalPago: { $sum: "$totalPago" },
-          premiacao: { $sum: "$premiacao" },
-          litrosTotal: { $sum: "$litrosTotal" },
-        },
-      },
-
-      {
-        $addFields: {
-          kmRodado: { $subtract: ["$kmFinalMax", "$kmInicialMin"] },
-          mediaGeral: {
-            $cond: [
-              { $gt: ["$litrosTotal", 0] },
-              { $divide: ["$kmRodado", "$litrosTotal"] },
-              0,
-            ],
-          },
-        },
-      },
-
-      { $sort: { totalFrete: -1 } },
-    ]);
-
-    res.json({ items: data });
+    res.json({ items });
   } catch (e) {
-    console.error("GET /admin/analytics/drivers", e);
-    res.status(500).json({ message: "Erro ao gerar indicadores" });
+    console.error("GET /admin/payments ERROR:", e);
+    res.status(500).json({ message: "Erro ao buscar pagamentos" });
+  }
+});
+
+router.post("/admin/payments", requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const {
+      driverId,
+      valorPago,
+      comprovanteEnviado,
+      observacao,
+      dataPagamento,
+    } = req.body;
+
+    if (!driverId || !valorPago || !dataPagamento) {
+      return res.status(400).json({
+        message: "Motorista, valor e data são obrigatórios",
+      });
+    }
+
+    const driver = await User.findById(driverId).lean();
+    if (!driver) {
+      return res.status(400).json({ message: "Motorista não encontrado" });
+    }
+
+    const payment = await Payment.create({
+      driverId,
+      driverName: driver.name || driver.email,
+      valorPago: Number(valorPago),
+      comprovanteEnviado: !!comprovanteEnviado,
+      observacao,
+      dataPagamento: new Date(dataPagamento),
+    });
+
+    res.status(201).json(payment);
+  } catch (e) {
+    console.error("POST /admin/payments ERROR:", e);
+    res.status(500).json({ message: "Erro ao registrar pagamento" });
+  }
+});
+
+router.delete("/admin/payments/:id", requireAuth, requireAdmin, async (req, res) => {
+  try {
+    await Payment.findByIdAndDelete(req.params.id);
+    res.json({ ok: true });
+  } catch {
+    res.status(500).json({ message: "Erro ao excluir pagamento" });
   }
 });
 

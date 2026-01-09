@@ -12,7 +12,7 @@ const TrechoSchema = new Schema({
   posto: String,
   litros: { type: Number, default: 0 },
   mediaTrecho: { type: Number, default: 0 },  // km/l
-  assinador: String,
+  // assinador: String,
   pago: { type: Boolean, default: false },
 }, { _id: false });
 
@@ -26,9 +26,10 @@ const TripSchema = new Schema({
   litrosTotal: { type: Number, default: 0 },
   mediaGeral: { type: Number, default: 0 },     // km/l da viagem
 
-  totalAssinado: { type: Number, default: 0 },
-  totalPago: { type: Number, default: 0 },
-  premiacao: { type: Number, default: 0 },
+  // totalAssinado: { type: Number, default: 0 },
+  // totalPago: { type: Number, default: 0 },
+  premiacaoPercentual: { type: Number, default: 0 },
+  premiacaoValor: { type: Number, default: 0 },
   totalDoFrete: { type: Number, default: 0 },
 
   extras: [{
