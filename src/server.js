@@ -638,41 +638,33 @@ router.get("/admin/payments", requireAuth, requireAdmin, async (req, res) => {
     }
 
     if (from || to) {
-      filter.dataPagamento = {};
-      if (from) {
-        filter.dataPagamento.$gte = new Date(from + "T00:00:00.000Z");
-      }
+      filter.paidAt = {};
+      if (from) filter.paidAt.$gte = new Date(from);
       if (to) {
-        filter.dataPagamento.$lte = new Date(to + "T23:59:59.999Z");
+        const d = new Date(to);
+        d.setHours(23, 59, 59, 999);
+        filter.paidAt.$lte = d;
       }
     }
 
     const items = await Payment.find(filter)
-      .sort({ dataPagamento: -1 })
-      .limit(200)
+      .sort({ paidAt: -1 })
+      .limit(300)
       .lean();
 
     res.json({ items });
   } catch (e) {
-    console.error("GET /admin/payments ERROR:", e);
+    console.error("GET /admin/payments", e);
     res.status(500).json({ message: "Erro ao buscar pagamentos" });
   }
 });
 
 router.post("/admin/payments", requireAuth, requireAdmin, async (req, res) => {
   try {
-    const {
-      driverId,
-      valorPago,
-      comprovanteEnviado,
-      observacao,
-      dataPagamento,
-    } = req.body;
+    const { driverId, amount, proofSent, note, paidAt } = req.body;
 
-    if (!driverId || !valorPago || !dataPagamento) {
-      return res.status(400).json({
-        message: "Motorista, valor e data são obrigatórios",
-      });
+    if (!driverId || !amount || Number(amount) <= 0) {
+      return res.status(400).json({ message: "Dados inválidos" });
     }
 
     const driver = await User.findById(driverId).lean();
@@ -683,15 +675,15 @@ router.post("/admin/payments", requireAuth, requireAdmin, async (req, res) => {
     const payment = await Payment.create({
       driverId,
       driverName: driver.name || driver.email,
-      valorPago: Number(valorPago),
-      comprovanteEnviado: !!comprovanteEnviado,
-      observacao,
-      dataPagamento: new Date(dataPagamento),
+      amount: Number(amount),
+      proofSent: !!proofSent,
+      note: note || "",
+      paidAt: paidAt ? new Date(paidAt) : new Date(),
     });
 
-    res.status(201).json(payment);
+    res.status(201).json({ payment });
   } catch (e) {
-    console.error("POST /admin/payments ERROR:", e);
+    console.error("POST /admin/payments", e);
     res.status(500).json({ message: "Erro ao registrar pagamento" });
   }
 });
