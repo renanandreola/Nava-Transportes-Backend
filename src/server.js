@@ -375,6 +375,22 @@ router.get("/admin/trips", requireAuth, requireAdmin, async (req, res) => {
   }
 });
 
+router.get("/admin/trips/:id", requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const id = req.params.id;
+
+    const trip = await Trip.findById(id).lean();
+    if (!trip) {
+      return res.status(404).json({ message: "Controle não encontrado." });
+    }
+
+    return res.json({ item: trip });
+  } catch (e) {
+    console.error("GET /admin/trips/:id", e);
+    return res.status(500).json({ message: "Erro ao buscar controle" });
+  }
+});
+
 router.put("/admin/trips/:id", requireAuth, requireAdmin, async (req, res) => {
   try {
     const id = req.params.id;
@@ -384,45 +400,89 @@ router.put("/admin/trips/:id", requireAuth, requireAdmin, async (req, res) => {
       return res.status(404).json({ message: "Controle não encontrado." });
     }
 
-    const driverId = req.body.driverId;
-    const driverName = req.body.driverName;
-    const plate = req.body.plate;
-    const totalDoFrete = req.body.totalDoFrete;
-    // const totalPago = req.body.totalPago;
-    const premiacao = req.body.premiacao;
-    // const totalAssinado = req.body.totalAssinado;
+    const {
+      driverId,
+      driverName,
+      plate,
+      data,
+      kmInicial,
+      kmFinal,
+      litrosTotal,
+      mediaGeral,
+      premiacaoPercentual,
+      totalDoFrete,
+      extras,
+      trechos,
+      latitude,
+      longitude,
+      locationAccuracy,
+    } = req.body;
 
     if (!plate || typeof plate !== "string" || plate.trim() === "") {
       return res.status(400).json({ message: "Placa é obrigatória." });
     }
+    trip.plate = plate.trim().toUpperCase();
 
-    trip.plate = plate.trim();
+    if (typeof driverId !== "undefined") trip.driverId = driverId || trip.driverId;
+    if (typeof driverName !== "undefined") trip.driverName = driverName || trip.driverName;
 
-    if (driverId) {
-      trip.driverId = driverId;
+    if (typeof data !== "undefined") {
+      trip.data = data ? new Date(data) : trip.data;
     }
-    if (driverName) {
-      trip.driverName = driverName;
+
+    if (typeof kmInicial !== "undefined") trip.kmInicial = Number(kmInicial) || 0;
+    if (typeof kmFinal !== "undefined") trip.kmFinal = Number(kmFinal) || 0;
+    if (typeof litrosTotal !== "undefined") trip.litrosTotal = Number(litrosTotal) || 0;
+    if (typeof mediaGeral !== "undefined") trip.mediaGeral = Number(mediaGeral) || 0;
+
+    if (typeof latitude !== "undefined") {
+      trip.latitude = latitude === "" || latitude === null ? undefined : Number(latitude);
+    }
+    if (typeof longitude !== "undefined") {
+      trip.longitude = longitude === "" || longitude === null ? undefined : Number(longitude);
+    }
+    if (typeof locationAccuracy !== "undefined") {
+      trip.locationAccuracy =
+        locationAccuracy === "" || locationAccuracy === null
+          ? undefined
+          : Number(locationAccuracy);
     }
 
     if (typeof totalDoFrete !== "undefined") {
       trip.totalDoFrete = Number(totalDoFrete) || 0;
     }
-    // if (typeof totalPago !== "undefined") {
-    //   trip.totalPago = Number(totalPago) || 0;
-    // }
-    if (typeof premiacao !== "undefined") {
-      trip.premiacao = Number(premiacao) || 0;
+
+    if (typeof premiacaoPercentual !== "undefined") {
+      const perc = Number(premiacaoPercentual) || 0;
+      if (perc < 0 || perc > 100) {
+        return res.status(400).json({ message: "Percentual de premiação inválido." });
+      }
+      trip.premiacaoPercentual = perc;
     }
-    // if (typeof totalAssinado !== "undefined") {
-    //   trip.totalAssinado = Number(totalAssinado) || 0;
-    // }
+
+    if (typeof extras !== "undefined") {
+      if (!Array.isArray(extras)) {
+        return res.status(400).json({ message: "Extras inválidos (deve ser array)." });
+      }
+      trip.extras = extras;
+    }
+
+    if (typeof trechos !== "undefined") {
+      if (!Array.isArray(trechos)) {
+        return res.status(400).json({ message: "Trechos inválidos (deve ser array)." });
+      }
+      trip.trechos = trechos;
+    }
+
+    const baseFrete = Number(trip.totalDoFrete) || 0;
+    const percFinal = Number(trip.premiacaoPercentual) || 0;
+    trip.premiacaoValor = +(baseFrete * (percFinal / 100)).toFixed(2);
 
     await trip.save();
 
     return res.json({
       message: "Controle atualizado",
-      trip: trip,
+      trip: trip.toObject(),
     });
   } catch (e) {
     console.error("PUT /admin/trips/:id", e);
