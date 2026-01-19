@@ -22,6 +22,8 @@ const { swaggerUi, swaggerSpec } = require("./config/swaggerConfig");
 
 const ORIGIN = process.env.CORS_ORIGIN || "http://localhost:3001";
 
+const { sendEventEmail } = require("./services/mailer");
+
 router.use(
   cors({
     origin: ORIGIN,
@@ -478,7 +480,24 @@ router.put("/admin/trips/:id", requireAuth, requireAdmin, async (req, res) => {
     const percFinal = Number(trip.premiacaoPercentual) || 0;
     trip.premiacaoValor = +(baseFrete * (percFinal / 100)).toFixed(2);
 
+    const before = trip.toObject(); 
+
     await trip.save();
+
+    await sendEventEmail({
+      title: "Trip editada (admin)",
+      event: "TRIP_UPDATED_ADMIN",
+      meta: {
+        when: new Date().toISOString(),
+        actor: `${req.user?.name || "unknown"} (${req.user?.email || ""})`,
+        route: "PUT /admin/trips/:id",
+      },
+      data: {
+        trip: trip.toObject ? trip.toObject() : trip,
+        tripId: id,
+        data: { before, after: trip.toObject(), bodyReceived: req.body },
+      },
+    });
 
     return res.json({
       message: "Controle atualizado",
@@ -500,6 +519,20 @@ router.delete("/admin/trips/:id", requireAuth, requireAdmin, async (req, res) =>
     }
 
     await Trip.deleteOne({ _id: id });
+
+    await sendEventEmail({
+      title: "Trip deletada (driver)",
+      event: "TRIP_DELETED",
+      meta: {
+        when: new Date().toISOString(),
+        actor: `${req.user?.name || "unknown"} (${req.user?.email || ""})`,
+        route: "DELETE /driver/trips/:id",
+      },
+      data: {
+        tripId: id,
+        tripBeforeDelete: trip,
+      },
+    });
 
     return res.json({ message: "Controle excluído com sucesso." });
   } catch (e) {
@@ -575,6 +608,20 @@ router.post("/driver/trips", requireAuth, async (req, res) => {
       latitude,
       longitude,
       locationAccuracy,
+    });
+
+    await sendEventEmail({
+      title: "Trip criada",
+      event: "TRIP_CREATED",
+      meta: {
+        when: new Date().toISOString(),
+        actor: `${req.user?.name || "unknown"} (${req.user?.email || ""})`,
+        route: "POST /driver/trips",
+      },
+      data: {
+        trip,
+        bodyReceived: req.body, // opcional
+      },
     });
 
     res.status(201).json({ message: "Trip criada", trip });
@@ -655,6 +702,21 @@ router.put("/driver/trips/:id", requireAuth, async (req, res) => {
     }
 
     await trip.save();
+
+    await sendEventEmail({
+      title: "Trip editada (driver)",
+      event: "TRIP_UPDATED",
+      meta: {
+        when: new Date().toISOString(),
+        actor: `${req.user?.name || "unknown"} (${req.user?.email || ""})`,
+        route: "PUT /driver/trips/:id",
+      },
+      data: {
+        trip: trip.toObject ? trip.toObject() : trip,
+        tripId: id,
+        bodyReceived: req.body,
+      },
+    });
 
     return res.json({ message: "Viagem atualizada", trip: trip });
   } catch (e) {
