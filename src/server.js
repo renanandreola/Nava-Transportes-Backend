@@ -24,7 +24,18 @@ const ORIGIN = process.env.CORS_ORIGIN || "http://localhost:3001";
 
 const { sendEventEmail } = require("./services/mailer");
 
-require("./jobs/weeklyTripsBackup");
+const cron = require("node-cron");
+const { runTripsBackup } = require("./jobs/weeklyTripsBackup");
+
+cron.schedule("0 3 * * 0", async () => {
+  try {
+    await runTripsBackup();
+  } catch (err) {
+    console.error("ERRO NO CRON:", err);
+  }
+});
+
+console.log("Backup job agendado (a cada 2 minutos)");
 
 router.use(
   cors({
