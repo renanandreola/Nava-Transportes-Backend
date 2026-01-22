@@ -1,6 +1,10 @@
 // services/mailer.js
 const nodemailer = require("nodemailer");
 
+/* =========================
+   Utils
+========================= */
+
 function requiredEnv(name) {
   if (!process.env[name]) {
     throw new Error(`Missing env var: ${name}`);
@@ -24,34 +28,59 @@ function safeJson(obj) {
   }
 }
 
+function renderList(data) {
+  if (!data || typeof data !== "object") return "";
+
+  const items = Object.entries(data)
+    .filter(([, value]) => value !== undefined && value !== null)
+    .map(
+      ([key, value]) => `
+        <li style="margin-bottom:6px">
+          <b>${escapeHtml(key)}:</b> ${escapeHtml(String(value))}
+        </li>
+      `
+    )
+    .join("");
+
+  return `
+    <ul style="
+      padding-left:18px;
+      margin:8px 0;
+      font-size:14px;
+    ">
+      ${items}
+    </ul>
+  `;
+}
+
+/* =========================
+   SMTP
+========================= */
+
 function buildTransporter() {
   requiredEnv("SMTP_HOST");
   requiredEnv("SMTP_PORT");
   requiredEnv("SMTP_USER");
   requiredEnv("SMTP_PASS");
 
-  const port = Number(process.env.SMTP_PORT);
-
-  const transporter = nodemailer.createTransport({
-    host: process.env.SMTP_HOST, // smtp.gmail.com
-    port,                        // 587
-    secure: false,               // STARTTLS
+  return nodemailer.createTransport({
+    host: process.env.SMTP_HOST,
+    port: Number(process.env.SMTP_PORT),
+    secure: false, // STARTTLS
     auth: {
       user: process.env.SMTP_USER,
-      pass: process.env.SMTP_PASS, // SENHA DE APP
+      pass: process.env.SMTP_PASS,
     },
     tls: {
       rejectUnauthorized: false,
     },
   });
-
-  return transporter;
 }
 
-/**
- * Envia e-mail de evento com TO + CC (fixos via env).
- * Nunca quebra a rota (falha só loga).
- */
+/* =========================
+   Public API
+========================= */
+
 async function sendEventEmail({ title, event, data, meta }) {
   try {
     requiredEnv("MAIL_TO");
@@ -59,35 +88,61 @@ async function sendEventEmail({ title, event, data, meta }) {
 
     const app = process.env.APP_NAME || "Nava";
     const from = process.env.MAIL_FROM || process.env.SMTP_USER;
-    const to = process.env.MAIL_TO;
-    const cc = process.env.MAIL_CC;
 
     const subject = `[${app}] ${title} - ${event}`;
+
+    /**
+     * 👉 DEFINA AQUI O QUE É "DADO PRINCIPAL"
+     * (simples, direto, humano)
+     */
+    const mainData = {
+      "ID": data?.tripId || data?.id,
+      "Motorista": data?.trip?.driverName || data?.driverName,
+      "Placa": data?.trip?.plate || data?.placa,
+      "Total do Frete": data?.trip?.totalDoFrete || data?.totalDoFrete,
+      "Premiação (%)": data?.trip?.premiacaoPercentual,
+      "Premiação (R$)": data?.trip?.premiacaoValor,
+      "Data": meta?.when,
+    };
+
+    const listHtml = renderList(mainData);
 
     const text = [
       `${app} - ${title}`,
       "",
       `Evento: ${event}`,
-      meta?.when ? `Data/Hora: ${meta.when}` : null,
-      meta?.actor ? `Usuário: ${meta.actor}` : null,
-      meta?.route ? `Rota: ${meta.route}` : null,
       "",
-      "Dados:",
-      safeJson(data),
-    ]
-      .filter(Boolean)
-      .join("\n");
+      "Dados principais:",
+      Object.entries(mainData)
+        .filter(([, v]) => v !== undefined && v !== null)
+        .map(([k, v]) => `- ${k}: ${v}`)
+        .join("\n"),
+    ].join("\n");
 
     const html = `
-      <div style="font-family: Arial, sans-serif; line-height: 1.4">
-        <h2 style="margin: 0 0 12px 0">${escapeHtml(app)} - ${escapeHtml(title)}</h2>
-        <div style="margin-bottom: 10px">
-          <b>Evento:</b> ${escapeHtml(event)}<br/>
-          ${meta?.when ? `<b>Data/Hora:</b> ${escapeHtml(meta.when)}<br/>` : ""}
-          ${meta?.actor ? `<b>Usuário:</b> ${escapeHtml(meta.actor)}<br/>` : ""}
-          ${meta?.route ? `<b>Rota:</b> ${escapeHtml(meta.route)}<br/>` : ""}
-        </div>
-        <h3 style="margin: 14px 0 8px 0">Dados</h3>
+      <div style="
+        font-family: Arial, sans-serif;
+        color:#222;
+        line-height:1.4;
+      ">
+        <h2 style="margin-bottom:8px">
+          ${escapeHtml(app)} - ${escapeHtml(title)}
+        </h2>
+
+        <p style="margin:0 0 10px 0">
+          <b>Evento:</b> ${escapeHtml(event)}
+        </p>
+
+        ${meta?.actor ? `<p><b>Usuário:</b> ${escapeHtml(meta.actor)}</p>` : ""}
+
+        <h3 style="margin:16px 0 6px 0">Dados principais</h3>
+        ${listHtml}
+
+        <p style="margin-top:20px; font-size:11px; color:#777">
+          E-mail automático • ${escapeHtml(app)}
+        </p>
+
+                <h3 style="margin: 14px 0 8px 0">Dados</h3>
         <pre style="background:#f6f6f6; padding:12px; border-radius:8px; overflow:auto">
 ${escapeHtml(safeJson(data))}
         </pre>
@@ -95,14 +150,12 @@ ${escapeHtml(safeJson(data))}
     `;
 
     const transporter = buildTransporter();
-
-    // valida conexão SMTP (opcional, mas recomendado)
     await transporter.verify();
 
     await transporter.sendMail({
       from,
-      to,
-      cc,
+      to: process.env.MAIL_TO,
+      cc: process.env.MAIL_CC,
       subject,
       text,
       html,
@@ -111,8 +164,9 @@ ${escapeHtml(safeJson(data))}
     return { ok: true };
   } catch (err) {
     console.error("sendEventEmail error:", err?.message || err);
-    return { ok: false, error: err?.message || String(err) };
+    return { ok: false };
   }
 }
 
 module.exports = { sendEventEmail };
+

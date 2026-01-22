@@ -24,6 +24,8 @@ const ORIGIN = process.env.CORS_ORIGIN || "http://localhost:3001";
 
 const { sendEventEmail } = require("./services/mailer");
 
+require("./jobs/weeklyTripsBackup");
+
 router.use(
   cors({
     origin: ORIGIN,
@@ -41,13 +43,13 @@ router.get("/health", async (req, res) => {
 
 router.post("/auth/login", async (req, res) => {
   try {
-    const { email, password } = req.body;
+    const { name, password } = req.body;
 
-    if (!email || !password) {
-      return res.status(400).json({ message: "Email e senha são obrigatórios." });
+    if (!name || !password) {
+      return res.status(400).json({ message: "Nome e senha são obrigatórios." });
     }
 
-    const user = await User.findOne({ email }).lean();
+    const user = await User.findOne({ name }).lean();
     if (!user) {
       return res.status(401).json({ message: "Credenciais inválidas." });
     }
@@ -62,7 +64,7 @@ router.post("/auth/login", async (req, res) => {
       ok = user.password === password;
     }
 
-    if (!ok && email === "admin@admin.com" && password === "admin") {
+    if (!ok && name === "Admin" && password === "admin") {
       ok = true;
     }
 
@@ -485,8 +487,8 @@ router.put("/admin/trips/:id", requireAuth, requireAdmin, async (req, res) => {
     await trip.save();
 
     await sendEventEmail({
-      title: "Trip editada (admin)",
-      event: "TRIP_UPDATED_ADMIN",
+      title: "Viagem editada",
+      event: "Viagem editada",
       meta: {
         when: new Date().toISOString(),
         actor: `${req.user?.name || "unknown"} (${req.user?.email || ""})`,
@@ -521,8 +523,8 @@ router.delete("/admin/trips/:id", requireAuth, requireAdmin, async (req, res) =>
     await Trip.deleteOne({ _id: id });
 
     await sendEventEmail({
-      title: "Trip deletada (driver)",
-      event: "TRIP_DELETED",
+      title: "Viagem deletada",
+      event: "Viagem deletada",
       meta: {
         when: new Date().toISOString(),
         actor: `${req.user?.name || "unknown"} (${req.user?.email || ""})`,
@@ -611,8 +613,8 @@ router.post("/driver/trips", requireAuth, async (req, res) => {
     });
 
     await sendEventEmail({
-      title: "Trip criada",
-      event: "TRIP_CREATED",
+      title: "Viagem criada",
+      event: "Viagem criada",
       meta: {
         when: new Date().toISOString(),
         actor: `${req.user?.name || "unknown"} (${req.user?.email || ""})`,
@@ -704,8 +706,8 @@ router.put("/driver/trips/:id", requireAuth, async (req, res) => {
     await trip.save();
 
     await sendEventEmail({
-      title: "Trip editada (driver)",
-      event: "TRIP_UPDATED",
+      title: "Viagem editada",
+      event: "Viagem editada",
       meta: {
         when: new Date().toISOString(),
         actor: `${req.user?.name || "unknown"} (${req.user?.email || ""})`,
