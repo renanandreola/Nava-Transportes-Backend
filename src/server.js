@@ -419,6 +419,7 @@ router.put("/admin/trips/:id", requireAuth, requireAdmin, async (req, res) => {
       driverId,
       driverName,
       plate,
+      companyName,
       data,
       kmInicial,
       kmFinal,
@@ -431,12 +432,24 @@ router.put("/admin/trips/:id", requireAuth, requireAdmin, async (req, res) => {
       latitude,
       longitude,
       locationAccuracy,
+
+      finalizado,
+      finished,
+      status,
+      finishedAt,
     } = req.body;
 
-    if (!plate || typeof plate !== "string" || plate.trim() === "") {
-      return res.status(400).json({ message: "Placa é obrigatória." });
+    if (typeof plate !== "undefined") {
+      if (!plate || typeof plate !== "string" || plate.trim() === "") {
+        return res.status(400).json({ message: "Placa é obrigatória." });
+      }
+
+      trip.plate = plate.trim().toUpperCase();
     }
-    trip.plate = plate.trim().toUpperCase();
+
+    if (typeof companyName !== "undefined") {
+      trip.companyName = companyName || "";
+    }
 
     if (typeof driverId !== "undefined") trip.driverId = driverId || trip.driverId;
     if (typeof driverName !== "undefined") trip.driverName = driverName || trip.driverName;
@@ -487,6 +500,22 @@ router.put("/admin/trips/:id", requireAuth, requireAdmin, async (req, res) => {
         return res.status(400).json({ message: "Trechos inválidos (deve ser array)." });
       }
       trip.trechos = trechos;
+    }
+
+    if (typeof finalizado !== "undefined") {
+      trip.finalizado = finalizado === true;
+    }
+
+    if (typeof finished !== "undefined") {
+      trip.finished = finished === true;
+    }
+
+    if (typeof status !== "undefined") {
+      trip.status = status || trip.status;
+    }
+
+    if (typeof finishedAt !== "undefined") {
+      trip.finishedAt = finishedAt ? new Date(finishedAt) : null;
     }
 
     const baseFrete = Number(trip.totalDoFrete) || 0;
@@ -578,6 +607,7 @@ router.post("/driver/trips", requireAuth, async (req, res) => {
       driverId,
       driverName,
       plate,
+      companyName,
       kmInicial,
       kmFinal,
       litrosTotal,
@@ -609,6 +639,7 @@ router.post("/driver/trips", requireAuth, async (req, res) => {
       driverId: driverId || req.user._id,
       driverName: driverName || req.user.name,
       plate,
+      companyName,
       kmInicial,
       kmFinal,
       litrosTotal,

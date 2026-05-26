@@ -20,7 +20,7 @@ const TripSchema = new Schema({
   driverId: { type: Types.ObjectId, ref: "User", required: true },
   driverName: String,
   plate: String,
-
+  companyName: String,
   kmInicial: { type: Number, default: 0 },
   kmFinal: { type: Number, default: 0 },
   litrosTotal: { type: Number, default: 0 },
@@ -38,6 +38,11 @@ const TripSchema = new Schema({
   }],
 
   trechos: [TrechoSchema],
+
+  finalizado: { type: Boolean, default: false },
+  finished: { type: Boolean, default: false },
+  status: { type: String, default: "aberto" },
+  finishedAt: { type: Date, default: null },
   
   latitude: { type: Number },
   longitude: { type: Number },
