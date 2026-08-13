@@ -11,6 +11,7 @@ const TrechoSchema = new Schema({
   kmFinal: { type: Number, default: 0 },
   posto: String,
   litros: { type: Number, default: 0 },
+  litrosArla: { type: Number, default: 0 },
   mediaTrecho: { type: Number, default: 0 },  // km/l
   // assinador: String,
   pago: { type: Boolean, default: false },
@@ -24,6 +25,7 @@ const TripSchema = new Schema({
   kmInicial: { type: Number, default: 0 },
   kmFinal: { type: Number, default: 0 },
   litrosTotal: { type: Number, default: 0 },
+  litrosArlaTotal: { type: Number, default: 0 },
   mediaGeral: { type: Number, default: 0 },     // km/l da viagem
 
   // totalAssinado: { type: Number, default: 0 },
@@ -39,6 +41,15 @@ const TripSchema = new Schema({
 
   trechos: [TrechoSchema],
 
+  checklist: {
+    documents: { type: Boolean, default: false },
+    conditions: { type: Boolean, default: false },
+  },
+  checklistSalvo: { type: Boolean, default: false },
+
+  isDraft: { type: Boolean, default: false, index: true },
+  submittedAt: { type: Date, default: null },
+
   finalizado: { type: Boolean, default: false },
   finished: { type: Boolean, default: false },
   status: { type: String, default: "aberto" },
@@ -48,5 +59,10 @@ const TripSchema = new Schema({
   longitude: { type: Number },
   locationAccuracy: { type: Number },
 }, { timestamps: true });
+
+TripSchema.index(
+  { driverId: 1 },
+  { unique: true, partialFilterExpression: { isDraft: true } }
+);
 
 module.exports = model("Trip", TripSchema);
