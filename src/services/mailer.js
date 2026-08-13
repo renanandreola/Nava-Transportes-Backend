@@ -1,9 +1,4 @@
-// services/mailer.js
 const nodemailer = require("nodemailer");
-
-/* =========================
-   Utils
-========================= */
 
 function requiredEnv(name) {
   if (!process.env[name]) {
@@ -53,10 +48,6 @@ function renderList(data) {
   `;
 }
 
-/* =========================
-   SMTP
-========================= */
-
 function buildTransporter() {
   requiredEnv("SMTP_HOST");
   requiredEnv("SMTP_PORT");
@@ -77,10 +68,6 @@ function buildTransporter() {
   });
 }
 
-/* =========================
-   Public API
-========================= */
-
 async function sendEventEmail({ title, event, data, meta }) {
   try {
     requiredEnv("MAIL_TO");
@@ -91,10 +78,6 @@ async function sendEventEmail({ title, event, data, meta }) {
 
     const subject = `[${app}] ${title} - ${event}`;
 
-    /**
-     * 👉 DEFINA AQUI O QUE É "DADO PRINCIPAL"
-     * (simples, direto, humano)
-     */
     const mainData = {
       "ID": data?.tripId || data?.id,
       "Motorista": data?.trip?.driverName || data?.driverName,

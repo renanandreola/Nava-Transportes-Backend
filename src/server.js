@@ -424,6 +424,7 @@ router.put("/admin/trips/:id", requireAuth, requireAdmin, async (req, res) => {
       kmInicial,
       kmFinal,
       litrosTotal,
+      litrosArlaTotal,
       mediaGeral,
       premiacaoPercentual,
       totalDoFrete,
@@ -461,6 +462,9 @@ router.put("/admin/trips/:id", requireAuth, requireAdmin, async (req, res) => {
     if (typeof kmInicial !== "undefined") trip.kmInicial = Number(kmInicial) || 0;
     if (typeof kmFinal !== "undefined") trip.kmFinal = Number(kmFinal) || 0;
     if (typeof litrosTotal !== "undefined") trip.litrosTotal = Number(litrosTotal) || 0;
+    if (typeof litrosArlaTotal !== "undefined") {
+      trip.litrosArlaTotal = Number(litrosArlaTotal) || 0;
+    }
     if (typeof mediaGeral !== "undefined") trip.mediaGeral = Number(mediaGeral) || 0;
 
     if (typeof latitude !== "undefined") {
@@ -600,29 +604,122 @@ router.put("/admin/users/:id/password", requireAuth, requireAdmin, async (req, r
   }
 });
 
+const buildTripData = (body, reqUser, isDraft) => {
+  const {
+    driverId,
+    driverName,
+    plate,
+    companyName,
+    kmInicial,
+    kmFinal,
+    litrosTotal,
+    litrosArlaTotal,
+    mediaGeral,
+    premiacaoPercentual,
+    totalDoFrete,
+    extras,
+    trechos,
+    checklist,
+    checklistSalvo,
+    latitude,
+    longitude,
+    locationAccuracy,
+  } = body;
+
+  const percentual = Number(premiacaoPercentual) || 0;
+  const totalFreteNum = Number(totalDoFrete) || 0;
+  const targetDriverId =
+    reqUser.role === "admin" && driverId ? driverId : reqUser.id;
+
+  return {
+    driverId: targetDriverId,
+    driverName: driverName || reqUser.name,
+    plate: typeof plate === "string" ? plate.trim().toUpperCase() : "",
+    companyName: companyName || "",
+    kmInicial: Number(kmInicial) || 0,
+    kmFinal: Number(kmFinal) || 0,
+    litrosTotal: Number(litrosTotal) || 0,
+    litrosArlaTotal: Number(litrosArlaTotal) || 0,
+    mediaGeral: Number(mediaGeral) || 0,
+    premiacaoPercentual: percentual,
+    premiacaoValor: +(totalFreteNum * (percentual / 100)).toFixed(2),
+    totalDoFrete: totalFreteNum,
+    extras: Array.isArray(extras) ? extras : [],
+    trechos: Array.isArray(trechos) ? trechos : [],
+    checklist: checklist || { documents: false, conditions: false },
+    checklistSalvo: checklistSalvo === true,
+    latitude,
+    longitude,
+    locationAccuracy,
+    isDraft,
+    submittedAt: isDraft ? null : new Date(),
+    finalizado: false,
+    finished: false,
+    status: isDraft ? "rascunho" : "aberto",
+    finishedAt: null,
+  };
+};
+
+router.get("/driver/trips/draft", requireAuth, async (req, res) => {
+  try {
+    const trip = await Trip.findOne({
+      driverId: req.user.id,
+      isDraft: true,
+    })
+      .sort({ updatedAt: -1 })
+      .lean();
+
+    return res.json({ item: trip || null });
+  } catch (e) {
+    console.error("GET /driver/trips/draft", e);
+    return res.status(500).json({ message: "Erro ao carregar rascunho" });
+  }
+});
+
+router.put("/driver/trips/draft", requireAuth, async (req, res) => {
+  try {
+    const percentual = Number(req.body.premiacaoPercentual) || 0;
+
+    if (percentual < 0 || percentual > 100) {
+      return res.status(400).json({
+        message: "Percentual de premiação inválido.",
+      });
+    }
+
+    const draftData = buildTripData(req.body, req.user, true);
+
+    const trip = await Trip.findOneAndUpdate(
+      { driverId: draftData.driverId, isDraft: true },
+      { $set: draftData },
+      {
+        new: true,
+        upsert: true,
+        runValidators: true,
+        setDefaultsOnInsert: true,
+      }
+    );
+
+    return res.json({ message: "Rascunho salvo", trip });
+  } catch (e) {
+    console.error("PUT /driver/trips/draft", e);
+    return res.status(500).json({ message: "Erro ao salvar rascunho" });
+  }
+});
+
+router.delete("/driver/trips/draft", requireAuth, async (req, res) => {
+  try {
+    await Trip.deleteOne({ driverId: req.user.id, isDraft: true });
+    return res.json({ message: "Rascunho removido" });
+  } catch (e) {
+    console.error("DELETE /driver/trips/draft", e);
+    return res.status(500).json({ message: "Erro ao remover rascunho" });
+  }
+});
+
 // Criar viagem (driver/admin)
 router.post("/driver/trips", requireAuth, async (req, res) => {
   try {
-    const {
-      driverId,
-      driverName,
-      plate,
-      companyName,
-      kmInicial,
-      kmFinal,
-      litrosTotal,
-      mediaGeral,
-      premiacaoPercentual,
-      totalDoFrete,
-      extras,
-      trechos,
-      latitude,
-      longitude,
-      locationAccuracy,
-    } = req.body;
-
-    const percentual = Number(premiacaoPercentual) || 0;
-    const totalFreteNum = Number(totalDoFrete) || 0;
+    const percentual = Number(req.body.premiacaoPercentual) || 0;
 
     // segurança
     if (percentual < 0 || percentual > 100) {
@@ -631,28 +728,17 @@ router.post("/driver/trips", requireAuth, async (req, res) => {
       });
     }
 
-    const premiacaoValor = +(
-      totalFreteNum * (percentual / 100)
-    ).toFixed(2);
+    const tripData = buildTripData(req.body, req.user, false);
 
-    const trip = await Trip.create({
-      driverId: driverId || req.user._id,
-      driverName: driverName || req.user.name,
-      plate,
-      companyName,
-      kmInicial,
-      kmFinal,
-      litrosTotal,
-      mediaGeral,
-      premiacaoPercentual: percentual,
-      premiacaoValor,
-      totalDoFrete: totalFreteNum,
-      extras,
-      trechos,
-      latitude,
-      longitude,
-      locationAccuracy,
-    });
+    let trip = await Trip.findOneAndUpdate(
+      { driverId: tripData.driverId, isDraft: true },
+      { $set: tripData },
+      { new: true, runValidators: true }
+    );
+
+    if (!trip) {
+      trip = await Trip.create(tripData);
+    }
 
     await sendEventEmail({
       title: "Viagem criada",
@@ -701,7 +787,7 @@ router.get("/driver/trips", requireAuth, async (req, res) => {
 router.put("/driver/trips/:id", requireAuth, async (req, res) => {
   try {
     const id = req.params.id;
-    const userId = req.user && req.user._id;
+    const userId = req.user && req.user.id;
 
     const trip = await Trip.findById(id);
     if (!trip) {
@@ -773,7 +859,7 @@ router.put("/driver/trips/:id", requireAuth, async (req, res) => {
 router.delete("/driver/trips/:id", requireAuth, async (req, res) => {
   try {
     const id = req.params.id;
-    const userId = req.user && req.user._id;
+    const userId = req.user && req.user.id;
 
     const trip = await Trip.findById(id).lean();
     if (!trip) {
@@ -828,23 +914,31 @@ router.get("/admin/payments", requireAuth, requireAdmin, async (req, res) => {
 router.post("/admin/payments", requireAuth, requireAdmin, async (req, res) => {
   try {
     const { driverId, amount, proofSent, note, paidAt } = req.body;
+    const amountNumber = Number(amount);
+    const paidAtDate = paidAt ? new Date(paidAt) : new Date();
 
-    if (!driverId || !amount || Number(amount) <= 0) {
-      return res.status(400).json({ message: "Dados inválidos" });
+    if (!driverId || !Number.isFinite(amountNumber) || amountNumber <= 0) {
+      return res.status(400).json({
+        message: "Motorista e valor maior que zero são obrigatórios.",
+      });
+    }
+
+    if (Number.isNaN(paidAtDate.getTime())) {
+      return res.status(400).json({ message: "Data do pagamento inválida." });
     }
 
     const driver = await User.findById(driverId).lean();
-    if (!driver) {
+    if (!driver || driver.role !== "driver") {
       return res.status(400).json({ message: "Motorista não encontrado" });
     }
 
     const payment = await Payment.create({
       driverId,
       driverName: driver.name || driver.email,
-      amount: Number(amount),
+      amount: amountNumber,
       proofSent: !!proofSent,
-      note: note || "",
-      paidAt: paidAt ? new Date(paidAt) : new Date(),
+      note: typeof note === "string" ? note.trim() : "",
+      paidAt: paidAtDate,
     });
 
     res.status(201).json({ payment });
@@ -854,12 +948,63 @@ router.post("/admin/payments", requireAuth, requireAdmin, async (req, res) => {
   }
 });
 
+router.put("/admin/payments/:id", requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const { driverId, amount, proofSent, note, paidAt } = req.body;
+    const amountNumber = Number(amount);
+    const paidAtDate = paidAt ? new Date(paidAt) : null;
+
+    if (!driverId || !Number.isFinite(amountNumber) || amountNumber <= 0) {
+      return res.status(400).json({
+        message: "Motorista e valor maior que zero são obrigatórios.",
+      });
+    }
+
+    if (!paidAtDate || Number.isNaN(paidAtDate.getTime())) {
+      return res.status(400).json({ message: "Data do pagamento inválida." });
+    }
+
+    const [payment, driver] = await Promise.all([
+      Payment.findById(req.params.id),
+      User.findById(driverId).lean(),
+    ]);
+
+    if (!payment) {
+      return res.status(404).json({ message: "Pagamento não encontrado." });
+    }
+
+    if (!driver || driver.role !== "driver") {
+      return res.status(400).json({ message: "Motorista não encontrado." });
+    }
+
+    payment.driverId = driver._id;
+    payment.driverName = driver.name || driver.email;
+    payment.amount = amountNumber;
+    payment.proofSent = proofSent === true;
+    payment.note = typeof note === "string" ? note.trim() : "";
+    payment.paidAt = paidAtDate;
+
+    await payment.save();
+
+    return res.json({ message: "Pagamento atualizado", payment });
+  } catch (e) {
+    console.error("PUT /admin/payments/:id", e);
+    return res.status(500).json({ message: "Erro ao atualizar pagamento" });
+  }
+});
+
 router.delete("/admin/payments/:id", requireAuth, requireAdmin, async (req, res) => {
   try {
-    await Payment.findByIdAndDelete(req.params.id);
-    res.json({ ok: true });
-  } catch {
-    res.status(500).json({ message: "Erro ao excluir pagamento" });
+    const payment = await Payment.findByIdAndDelete(req.params.id);
+
+    if (!payment) {
+      return res.status(404).json({ message: "Pagamento não encontrado." });
+    }
+
+    return res.json({ message: "Pagamento excluído", paymentId: payment._id });
+  } catch (e) {
+    console.error("DELETE /admin/payments/:id", e);
+    return res.status(500).json({ message: "Erro ao excluir pagamento" });
   }
 });
 
