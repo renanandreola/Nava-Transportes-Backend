@@ -65,4 +65,6 @@ TripSchema.index(
   { unique: true, partialFilterExpression: { isDraft: true } }
 );
 
+TripSchema.index({ driverId: 1, isDraft: 1, submittedAt: -1 });
+
 module.exports = model("Trip", TripSchema);

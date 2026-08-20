@@ -2,8 +2,8 @@ const express = require("express");
 const router = express.Router();
 require("dotenv").config();
 
-const cors = require("cors");
 const bcrypt = require("bcryptjs");
+const crypto = require("crypto");
 
 const Trip = require("./database/Schemas/Trip");
 const User = require("./database/Schemas/Users");
@@ -17,10 +17,10 @@ const {
 } = require("./auth/tokens");
 
 const requireAuth = require("./middlewares/requireAuth");
-
-const { swaggerUi, swaggerSpec } = require("./config/swaggerConfig");
-
-const ORIGIN = process.env.CORS_ORIGIN || "http://localhost:3001";
+const {
+  loginRateLimiter,
+  refreshRateLimiter,
+} = require("./middlewares/security");
 
 const { sendEventEmail } = require("./services/mailer");
 
@@ -35,52 +35,116 @@ cron.schedule("0 3 * * 0", async () => {
   }
 });
 
-console.log("Backup job agendado (a cada 2 minutos)");
+console.log("Backup job agendado (semanalmente, aos domingos às 03:00)");
 
-router.use(
-  cors({
-    origin: ORIGIN,
-    credentials: true,
-  })
-);
-router.use(express.json());
+const apiDocsEnabled =
+  process.env.NODE_ENV !== "production" || process.env.ENABLE_API_DOCS === "true";
 
-router.use("/api-docs", swaggerUi.serve, swaggerUi.setup(swaggerSpec));
+if (apiDocsEnabled) {
+  const { swaggerUi, swaggerSpec } = require("./config/swaggerConfig");
+  router.use("/api-docs", swaggerUi.serve, swaggerUi.setup(swaggerSpec));
+}
+
+const boundedPositiveInteger = (value, fallback, maximum) => {
+  const parsed = Number(value);
+
+  if (!Number.isInteger(parsed) || parsed <= 0) {
+    return fallback;
+  }
+
+  return Math.min(parsed, maximum);
+};
 
 router.get("/health", async (req, res) => {
   console.log("Nava test routing in running!");
   return res.json({ status: 200, message: "Nava test routing in running!" });
 });
 
-router.post("/auth/login", async (req, res) => {
+const safeStringEquals = (left, right) => {
+  const leftBuffer = Buffer.from(String(left));
+  const rightBuffer = Buffer.from(String(right));
+
+  return (
+    leftBuffer.length === rightBuffer.length &&
+    crypto.timingSafeEqual(leftBuffer, rightBuffer)
+  );
+};
+
+const isValidNewPassword = (password) =>
+  typeof password === "string" &&
+  password.length >= 8 &&
+  password.length <= 128;
+
+router.post("/auth/login", loginRateLimiter, async (req, res) => {
   try {
     const { name, password } = req.body;
 
-    if (!name || !password) {
-      return res.status(400).json({ message: "Nome e senha são obrigatórios." });
+    if (
+      typeof name !== "string" ||
+      typeof password !== "string" ||
+      !name.trim() ||
+      !password ||
+      name.length > 120 ||
+      password.length > 128
+    ) {
+      return res.status(400).json({
+        message: "Nome e senha são obrigatórios.",
+      });
     }
 
-    const user = await User.findOne({ name }).lean();
+    const user = await User.findOne({ name: name.trim() }).select(
+      "+password +passwordHash +legacyAdminMigratedAt"
+    );
+
     if (!user) {
-      return res.status(401).json({ message: "Credenciais inválidas." });
+      return res.status(401).json({
+        message: "Credenciais inválidas.",
+      });
+    }
+
+    if (user.active === false) {
+      return res.status(401).json({
+        message: "Credenciais inválidas.",
+      });
     }
 
     let ok = false;
+    let migratedLegacyPassword = false;
 
     if (user.passwordHash) {
       ok = await bcrypt.compare(password, user.passwordHash);
     }
 
-    if (!ok && user.password) {
-      ok = user.password === password;
+    if (!ok && typeof user.password === "string") {
+      ok = safeStringEquals(user.password, password);
+      migratedLegacyPassword = ok;
     }
 
-    if (!ok && name === "Admin" && password === "admin") {
+    if (
+      !ok &&
+      !user.legacyAdminMigratedAt &&
+      name.trim() === "Admin" &&
+      password === "admin"
+    ) {
       ok = true;
+      migratedLegacyPassword = true;
     }
 
     if (!ok) {
-      return res.status(401).json({ message: "Credenciais inválidas." });
+      return res.status(401).json({
+        message: "Credenciais inválidas.",
+      });
+    }
+
+    if (migratedLegacyPassword) {
+      user.passwordHash = await bcrypt.hash(password, 12);
+      user.password = undefined;
+
+      if (user.name === "Admin" && !user.legacyAdminMigratedAt) {
+        user.legacyAdminMigratedAt = new Date();
+      }
+
+      await user.save();
     }
 
     const payload = {
@@ -100,20 +164,22 @@ router.post("/auth/login", async (req, res) => {
     });
   } catch (err) {
     console.error("Login error:", err);
-    return res.status(500).json({ message: "Erro no login" });
+    return res.status(500).json({
+      message: "Erro no login",
+    });
   }
 });
 
-router.post("/auth/refresh", async (req, res) => {
+router.post("/auth/refresh", refreshRateLimiter, async (req, res) => {
   const { refreshToken } = req.body;
-  if (!refreshToken) {
+  if (typeof refreshToken !== "string" || !refreshToken) {
     return res.status(401).json({ message: "Refresh token ausente" });
   }
 
   try {
     const decoded = verifyRefreshToken(refreshToken);
     const user = await User.findById(decoded.id).lean();
-    if (!user) {
+    if (!user || user.active === false) {
       return res.status(401).json({ message: "Usuário inválido" });
     }
 
@@ -170,22 +236,26 @@ const requireAdmin = (req, res, next) => {
 router.get("/admin/users", requireAuth, requireAdmin, async (req, res) => {
   try {
     const { q = "", role, page = 1, limit = 10 } = req.query;
-    const skip = (Number(page) - 1) * Number(limit);
+    const pageNumber = boundedPositiveInteger(page, 1, 100000);
+    const pageLimit = boundedPositiveInteger(limit, 10, 100);
+    const skip = (pageNumber - 1) * pageLimit;
+    const query = String(q).trim().slice(0, 100);
+    const regex = query ? new RegExp(escapeRegex(query), "i") : null;
 
     const where = {
-      ...(q && { $or: [
-        { name: { $regex: q, $options: "i" } },
-        { email: { $regex: q, $options: "i" } },
+      ...(regex && { $or: [
+        { name: regex },
+        { email: regex },
       ]}),
       ...(role && { role }),
     };
 
     const [items, total] = await Promise.all([
-      User.find(where).sort({ createdAt: -1 }).skip(skip).limit(Number(limit)).lean(),
+      User.find(where).sort({ createdAt: -1 }).skip(skip).limit(pageLimit).lean(),
       User.countDocuments(where),
     ]);
 
-    res.json({ items, total, page: Number(page), limit: Number(limit) });
+    res.json({ items, total, page: pageNumber, limit: pageLimit });
   } catch (e) {
     console.error("GET /admin/users", e);
     res.status(500).json({ message: "Erro ao listar usuários" });
@@ -196,8 +266,20 @@ router.post("/admin/users", requireAuth, requireAdmin, async (req, res) => {
   try {
     const {name, email, password, role = "driver", active = true, commission = 0} = req.body;
 
-    if (!name || !email || !password) {
+    if (
+      typeof name !== "string" ||
+      typeof email !== "string" ||
+      !name.trim() ||
+      !email.trim() ||
+      !password
+    ) {
       return res.status(400).json({ message: "Nome, e-mail e senha são obrigatórios." });
+    }
+
+    if (!isValidNewPassword(password)) {
+      return res.status(400).json({
+        message: "A senha deve possuir entre 8 e 128 caracteres.",
+      });
     }
 
     if (commission < 0 || commission > 100) {
@@ -206,12 +288,21 @@ router.post("/admin/users", requireAuth, requireAdmin, async (req, res) => {
       });
     }
 
-    const exists = await User.findOne({ email }).lean();
+    const normalizedEmail = email.trim().toLowerCase();
+    const exists = await User.findOne({ email: normalizedEmail }).lean();
     if (exists) return res.status(409).json({ message: "E-mail já cadastrado." });
 
-    const passwordHash = await bcrypt.hash(password, 10);
+    const passwordHash = await bcrypt.hash(password, 12);
 
-    const user = await User.create({name, email, passwordHash, role, active, commission});
+    const user = await User.create({
+      name: name.trim(),
+      email: normalizedEmail,
+      passwordHash,
+      legacyAdminMigratedAt: name.trim() === "Admin" ? new Date() : null,
+      role,
+      active,
+      commission,
+    });
 
     res.status(201).json({
       message: "Usuário criado",
@@ -239,7 +330,12 @@ router.put("/admin/users/:id", requireAuth, requireAdmin, async (req, res) => {
       return res.status(404).json({ message: "Usuário não encontrado." });
     }
 
-    if (!name || !email) {
+    if (
+      typeof name !== "string" ||
+      typeof email !== "string" ||
+      !name.trim() ||
+      !email.trim()
+    ) {
       return res.status(400).json({ message: "Nome e e-mail são obrigatórios." });
     }
 
@@ -252,19 +348,32 @@ router.put("/admin/users/:id", requireAuth, requireAdmin, async (req, res) => {
       });
     }
 
-    if (email !== user.email) {
-      const exists = await User.findOne({ email: email }).lean();
+    const normalizedEmail = email.trim().toLowerCase();
+
+    if (normalizedEmail !== user.email) {
+      const exists = await User.findOne({ email: normalizedEmail }).lean();
       if (exists) {
         return res.status(409).json({ message: "E-mail já cadastrado." });
       }
-      user.email = email;
+      user.email = normalizedEmail;
     }
 
-    user.name = name;
+    user.name = name.trim();
 
-    if (password && password.trim() !== "") {
-      const passwordHash = await bcrypt.hash(password, 10);
+    if (user.name === "Admin" && !user.legacyAdminMigratedAt) {
+      user.legacyAdminMigratedAt = new Date();
+    }
+
+    if (password !== undefined && password !== null && password !== "") {
+      if (!isValidNewPassword(password)) {
+        return res.status(400).json({
+          message: "A senha deve possuir entre 8 e 128 caracteres.",
+        });
+      }
+
+      const passwordHash = await bcrypt.hash(password, 12);
       user.passwordHash = passwordHash;
+      user.password = undefined;
     }
 
     if (role) {
@@ -341,7 +450,7 @@ router.get("/admin/trips", requireAuth, requireAdmin, async (req, res) => {
     if (plate) {
       const plateTrim = plate.trim();
       if (plateTrim) {
-        filter.plate = new RegExp(plateTrim, "i");
+        filter.plate = new RegExp(escapeRegex(plateTrim.slice(0, 30)), "i");
       }
     }
 
@@ -359,7 +468,7 @@ router.get("/admin/trips", requireAuth, requireAdmin, async (req, res) => {
     if (q) {
       const qTrim = q.trim();
       if (qTrim) {
-        const regex = new RegExp(qTrim, "i");
+        const regex = new RegExp(escapeRegex(qTrim.slice(0, 100)), "i");
 
         filter.$or = [
           { plate: regex },
@@ -591,10 +700,26 @@ router.put("/admin/users/:id/password", requireAuth, requireAdmin, async (req, r
   try {
     const { id } = req.params;
     const { password } = req.body;
-    if (!password) return res.status(400).json({ message: "Senha obrigatória." });
+    if (!isValidNewPassword(password)) {
+      return res.status(400).json({
+        message: "A senha deve possuir entre 8 e 128 caracteres.",
+      });
+    }
 
-    const passwordHash = await bcrypt.hash(password, 10);
-    const user = await User.findByIdAndUpdate(id, { $set: { passwordHash } }, { new: true }).lean();
+    const passwordHash = await bcrypt.hash(password, 12);
+    const user = await User.findByIdAndUpdate(
+      id,
+      {
+        $set: {
+          passwordHash,
+          legacyAdminMigratedAt: new Date(),
+        },
+        $unset: {
+          password: 1,
+        },
+      },
+      { new: true }
+    ).lean();
     if (!user) return res.status(404).json({ message: "Usuário não encontrado" });
 
     res.json({ message: "Senha redefinida" });
@@ -660,6 +785,22 @@ const buildTripData = (body, reqUser, isDraft) => {
   };
 };
 
+const validateFinalTripKm = (body) => {
+  const kmInicial = Number(body.kmInicial);
+  const kmFinal = Number(body.kmFinal);
+
+  if (
+    !Number.isFinite(kmInicial) ||
+    !Number.isFinite(kmFinal) ||
+    kmInicial < 0 ||
+    kmFinal < kmInicial
+  ) {
+    return "A KM final deve ser igual ou maior que a KM inicial.";
+  }
+
+  return null;
+};
+
 router.get("/driver/trips/draft", requireAuth, async (req, res) => {
   try {
     const trip = await Trip.findOne({
@@ -673,6 +814,27 @@ router.get("/driver/trips/draft", requireAuth, async (req, res) => {
   } catch (e) {
     console.error("GET /driver/trips/draft", e);
     return res.status(500).json({ message: "Erro ao carregar rascunho" });
+  }
+});
+
+router.get("/driver/trips/last-km", requireAuth, async (req, res) => {
+  try {
+    const lastTrip = await Trip.findOne({
+      driverId: req.user.id,
+      isDraft: false,
+      kmFinal: { $gt: 0 },
+    })
+      .sort({ submittedAt: -1, createdAt: -1 })
+      .select("kmFinal submittedAt")
+      .lean();
+
+    return res.json({
+      kmFinal: lastTrip ? Number(lastTrip.kmFinal) : 0,
+      submittedAt: lastTrip?.submittedAt || null,
+    });
+  } catch (e) {
+    console.error("GET /driver/trips/last-km", e);
+    return res.status(500).json({ message: "Erro ao carregar a última KM" });
   }
 });
 
@@ -720,6 +882,11 @@ router.delete("/driver/trips/draft", requireAuth, async (req, res) => {
 router.post("/driver/trips", requireAuth, async (req, res) => {
   try {
     const percentual = Number(req.body.premiacaoPercentual) || 0;
+    const kmError = validateFinalTripKm(req.body);
+
+    if (kmError) {
+      return res.status(400).json({ message: kmError });
+    }
 
     // segurança
     if (percentual < 0 || percentual > 100) {
@@ -766,18 +933,29 @@ router.get("/driver/trips", requireAuth, async (req, res) => {
   try {
     const isAdmin = req.user?.role === "admin";
     const { page = 1, limit = 20, driverId } = req.query;
-    const skip = (Number(page) - 1) * Number(limit);
+    const pageNumber = boundedPositiveInteger(page, 1, 100000);
+    const pageLimit = boundedPositiveInteger(limit, 20, 100);
+    const skip = (pageNumber - 1) * pageLimit;
 
     const where = isAdmin
       ? (driverId ? { driverId } : {})
       : { driverId: req.user.id };
 
     const [items, total] = await Promise.all([
-      Trip.find(where).sort({ createdAt: -1 }).skip(skip).limit(Number(limit)).lean(),
+      Trip.find(where)
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(pageLimit)
+        .lean(),
       Trip.countDocuments(where),
     ]);
 
-    return res.json({ items, total, page: Number(page), limit: Number(limit) });
+    return res.json({
+      items,
+      total,
+      page: pageNumber,
+      limit: pageLimit,
+    });
   } catch (e) {
     console.error("GET /driver/trips", e);
     return res.status(500).json({ message: "Erro ao listar viagens" });
