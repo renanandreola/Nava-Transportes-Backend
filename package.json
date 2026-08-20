@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "nodemon main.js",
     "start": "node main.js",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "node --test",
+    "security:audit": "npm audit --omit=dev"
   },
   "repository": {
     "type": "git",
@@ -23,6 +24,7 @@
     "bcryptjs": "^3.0.3",
     "cookie-parser": "^1.4.7",
     "cors": "^2.8.5",
+    "crypto": "^1.0.1",
     "csv-writer": "^1.6.0",
     "dotenv": "^17.2.3",
     "express": "^5.1.0",
@@ -32,7 +34,7 @@
     "mongodb": "^7.0.0",
     "mongoose": "^8.21.0",
     "node-cron": "^4.2.1",
-    "nodemailer": "^7.0.12",
+    "nodemailer": "^9.0.5",
     "nodemon": "^3.1.10",
     "path": "^0.12.7",
     "swagger-jsdoc": "^6.2.8",
