@@ -41,6 +41,8 @@ const TripSchema = new Schema({
 
   trechos: [TrechoSchema],
 
+  observations: { type: String, default: "" },
+
   checklist: {
     documents: { type: Boolean, default: false },
     conditions: { type: Boolean, default: false },

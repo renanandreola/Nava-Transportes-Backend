@@ -27,15 +27,32 @@ const { sendEventEmail } = require("./services/mailer");
 const cron = require("node-cron");
 const { runTripsBackup } = require("./jobs/weeklyTripsBackup");
 
+// Agendador de backup semanal (Domingo às 03:00 - horário UTC)
 cron.schedule("0 3 * * 0", async () => {
+  console.log(
+    "\n═══════════════════════════════════════════════════════════════"
+  );
+  console.log("[BACKUP] Iniciando backup semanal de viagens");
+  console.log("═══════════════════════════════════════════════════════════════");
+
   try {
-    await runTripsBackup();
+    const result = await runTripsBackup();
+    if (result.success) {
+      console.log(`[BACKUP] ✅ Sucesso: ${result.message}`);
+      console.log(`[BACKUP] 📊 Viagens: ${result.tripsCount}`);
+      console.log(`[BACKUP] ⏱️  Duração: ${result.duration}`);
+    }
   } catch (err) {
-    console.error("ERRO NO CRON:", err);
+    console.error("[BACKUP] ❌ Erro fatal:", err?.message || String(err));
+    console.error("[BACKUP] Stack:", err?.stack);
   }
+
+  console.log(
+    "═══════════════════════════════════════════════════════════════\n"
+  );
 });
 
-console.log("Backup job agendado (semanalmente, aos domingos às 03:00)");
+console.log("📅 Backup job agendado: Toda semana no domingo às 03:00 (UTC)");
 
 const apiDocsEnabled =
   process.env.NODE_ENV !== "production" || process.env.ENABLE_API_DOCS === "true";
@@ -539,6 +556,7 @@ router.put("/admin/trips/:id", requireAuth, requireAdmin, async (req, res) => {
       totalDoFrete,
       extras,
       trechos,
+      observations,
       latitude,
       longitude,
       locationAccuracy,
@@ -613,6 +631,10 @@ router.put("/admin/trips/:id", requireAuth, requireAdmin, async (req, res) => {
         return res.status(400).json({ message: "Trechos inválidos (deve ser array)." });
       }
       trip.trechos = trechos;
+    }
+
+    if (typeof observations !== "undefined") {
+      trip.observations = observations || "";
     }
 
     if (typeof finalizado !== "undefined") {
@@ -746,6 +768,7 @@ const buildTripData = (body, reqUser, isDraft) => {
     trechos,
     checklist,
     checklistSalvo,
+    observations,
     latitude,
     longitude,
     locationAccuracy,
@@ -773,6 +796,7 @@ const buildTripData = (body, reqUser, isDraft) => {
     trechos: Array.isArray(trechos) ? trechos : [],
     checklist: checklist || { documents: false, conditions: false },
     checklistSalvo: checklistSalvo === true,
+    observations: typeof observations === "string" ? observations : "",
     latitude,
     longitude,
     locationAccuracy,
